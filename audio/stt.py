@@ -81,14 +81,24 @@ def transcribe(audio_bytes: bytes, *, callsign: Optional[str] = None) -> str:
         f.write(audio_bytes)
         tmp = Path(f.name)
     try:
-        segments, _info = model.transcribe(
-            str(tmp),
-            language="en",
-            initial_prompt=prompt,
-        )
-        # Consume the lazy generator fully here, while the temp file still exists.
-        # Do NOT return the generator unconsumed — the finally would delete the
-        # file before the caller iterates it.
-        return " ".join(seg.text for seg in segments).strip()
+        try:
+            segments, _info = model.transcribe(
+                str(tmp),
+                language="en",
+                initial_prompt=prompt,
+            )
+            # Consume the lazy generator fully here, while the temp file still exists.
+            # Do NOT return the generator unconsumed — the finally would delete the
+            # file before the caller iterates it.
+            return " ".join(seg.text for seg in segments).strip()
+        except RuntimeError as e:
+            if "model.bin" in str(e):
+                raise RuntimeError(
+                    f"Model {config.STT_MODEL!r} is not in CTranslate2 format. "
+                    "Use a standard size name (e.g. 'large-v3') or convert a "
+                    "HuggingFace model with ct2-transformers-converter first. "
+                    f"Original error: {e}"
+                ) from e
+            raise
     finally:
         tmp.unlink(missing_ok=True)

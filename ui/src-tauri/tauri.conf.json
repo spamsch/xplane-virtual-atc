@@ -36,9 +36,7 @@
       "icons/icon.ico"
     ],
     "macOS": {
-      "infoPlist": {
-        "NSMicrophoneUsageDescription": "X-Plane Virtual ATC uses your microphone for pilot radio transmissions."
-      }
+      "infoPlist": "Info.plist"
     }
   }
 }
