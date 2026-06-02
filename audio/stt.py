@@ -14,6 +14,7 @@ Public API:
 from __future__ import annotations
 
 import logging
+import os
 import tempfile
 from pathlib import Path
 from typing import Optional
@@ -56,11 +57,13 @@ def _load_model():
             "Run: pip install faster-whisper"
         ) from None
 
-    log.info(f"Loading Whisper model {config.STT_MODEL!r} (first use — may download)…")
-    kwargs = dict(device="cpu", compute_type="int8")
+    # huggingface_hub reads HF_TOKEN from the environment automatically.
+    # Don't pass it to WhisperModel — faster-whisper 1.2.1 incorrectly forwards
+    # it to the ctranslate2 constructor, which rejects it.
     if config.HF_TOKEN:
-        kwargs["huggingface_token"] = config.HF_TOKEN
-    _model = WhisperModel(config.STT_MODEL, **kwargs)
+        os.environ.setdefault("HF_TOKEN", config.HF_TOKEN)
+    log.info(f"Loading Whisper model {config.STT_MODEL!r} (first use — may download)…")
+    _model = WhisperModel(config.STT_MODEL, device="cpu", compute_type="int8")
     log.info("Whisper model ready.")
     return _model
 
