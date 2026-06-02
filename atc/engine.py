@@ -40,20 +40,33 @@ def _claude(prompt: str, model: str, timeout: int = 90) -> str:
 # Context building
 
 def _build_situation(airport: Airport, acft: Optional[AircraftPerf],
-                     callsign: str, conditions: dict) -> str:
-    return textwrap.dedent(f"""
-        Airport : {airport.name} ({airport.icao}), elevation {airport.elevation_ft} ft
-        Runways : {airport.runway_summary()}
-        Frequencies:
-        {airport.freq_summary()}
-        Aircraft: {acft.describe() if acft else f'unknown type, callsign {callsign}'}
-        Callsign: {callsign}
-        Wind    : {conditions.get('wind', 'not available — pilot should check ATIS')}
-        QNH     : {conditions.get('qnh', 'not available')}
-        Vis     : {conditions.get('vis', 'not available')}
-        Time    : {conditions.get('time', 'not available')}
-        Active RWY: {conditions.get('active_runway', 'to be determined')}
-    """).strip()
+                     callsign: str, conditions: dict,
+                     destination: Optional[Airport] = None) -> str:
+    lines = [
+        f"Airport     : {airport.name} ({airport.icao}), elevation {airport.elevation_ft} ft",
+    ]
+    if destination:
+        lines.append(f"Destination : {destination.name} ({destination.icao})")
+    lines += [
+        f"Runways     : {airport.runway_summary()}",
+        f"Frequencies :\n{airport.freq_summary()}",
+        f"Aircraft    : {acft.describe() if acft else f'unknown type, callsign {callsign}'}",
+        f"Callsign    : {callsign}",
+    ]
+    if conditions.get('stand'):
+        lines.append(f"Stand       : {conditions['stand']}")
+    lines += [
+        f"Wind        : {conditions.get('wind', 'not available — pilot should check ATIS')}",
+        f"QNH         : {conditions.get('qnh', 'not available')}",
+    ]
+    if conditions.get('atis'):
+        lines.append(f"ATIS        : {conditions['atis']}")
+    lines += [
+        f"Visibility  : {conditions.get('vis', 'not available')}",
+        f"Time        : {conditions.get('time', 'not available')}",
+        f"Active RWY  : {conditions.get('active_runway', 'to be determined')}",
+    ]
+    return '\n'.join(lines)
 
 
 # ------------------------------------------------------------------ #
@@ -80,8 +93,9 @@ Respond with valid JSON only, no commentary:
 
 
 def boundary_check(airport: Airport, acft: Optional[AircraftPerf],
-                   callsign: str, conditions: dict, model: str) -> dict:
-    situation = _build_situation(airport, acft, callsign, conditions)
+                   callsign: str, conditions: dict, model: str,
+                   destination: Optional[Airport] = None) -> dict:
+    situation = _build_situation(airport, acft, callsign, conditions, destination)
     prompt = _BOUNDARY_PROMPT.format(situation=situation)
     log.info(f"[Opus boundary check for {airport.icao}]")
     raw = _claude(prompt, model)
@@ -125,9 +139,10 @@ def respond(pilot_message: str,
             atc_callsign: str,
             history: list,
             model: str,
-            extra_instructions: Optional[str] = None) -> str:
+            extra_instructions: Optional[str] = None,
+            destination: Optional[Airport] = None) -> str:
 
-    situation = _build_situation(airport, acft, callsign, conditions)
+    situation = _build_situation(airport, acft, callsign, conditions, destination)
     history_text = '\n'.join(
         f"  Pilot: {h['pilot']}\n  ATC:   {h['atc']}"
         for h in history[-6:]

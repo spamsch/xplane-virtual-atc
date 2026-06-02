@@ -253,6 +253,7 @@ class ATCSession:
             history=self._history,
             model=model,
             extra_instructions='\n'.join(extra_parts) if extra_parts else None,
+            destination=self.destination,
         )
 
         self._stations_seen.add(self.current_station)
@@ -387,5 +388,6 @@ class ATCSession:
             'vis':            f"{c.get('visibility_km', c.get('vis', '?'))} km",
             'time':           'check simulator clock',
             'active_runway':  c.get('active_runway', 'unknown'),
-            'atis':           c.get('atis', '?'),
+            'atis':           c.get('atis', ''),
+            'stand':          c.get('stand', ''),
         }

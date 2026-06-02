@@ -11,7 +11,8 @@
     "wind_dir": 270,
     "wind_kts": 8,
     "visibility_km": 10,
-    "atis": "Charlie"
+    "atis": "Charlie",
+    "stand": "GA apron"
   },
   "destination_airport": "EDDG",
   "destination_conditions": {

@@ -160,7 +160,8 @@ def _canned_response(pilot_message: str, atc_callsign: str,
 @pytest.fixture(autouse=True)
 def _mock_engine(monkeypatch):
     def _respond(pilot_message, airport, acft, callsign, conditions,
-                 atc_callsign, history=None, model=None, extra_instructions=None):
+                 atc_callsign, history=None, model=None, extra_instructions=None,
+                 destination=None):
         return _canned_response(pilot_message, atc_callsign, extra_instructions)
     monkeypatch.setattr('atc.engine.respond', _respond)
 
