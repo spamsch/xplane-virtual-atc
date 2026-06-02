@@ -6,8 +6,136 @@
 import {
   wsStatus, backendUptime, source, scenarioName,
   flightState, airport, activeRunway, atcCallsign, boundaryNotes,
-  messages, phase, station, thinking
+  messages, phase, station, thinking,
+  pttActive, transcription,
 } from './store.js';
+
+// ── Audio state (kept here so PTT logic is co-located with WS send) ───────
+let _mediaRecorder = null;
+let _audioChunks   = [];
+let _micStream     = null;
+
+const MAX_PTT_MS = 30_000;   // hard cap: 30 s max recording
+let   _pttTimer  = null;
+
+export async function requestMicPermission() {
+  try {
+    _micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function startPTT() {
+  if (_mediaRecorder?.state === 'recording') return;
+
+  if (!_micStream) {
+    _micStream = await navigator.mediaDevices.getUserMedia({ audio: true }).catch(() => null);
+    if (!_micStream) return;
+  }
+
+  _audioChunks   = [];
+  _mediaRecorder = new MediaRecorder(_micStream);
+  _mediaRecorder.ondataavailable = e => { if (e.data.size > 0) _audioChunks.push(e.data); };
+  _mediaRecorder.start();
+  pttActive.set(true);
+  transcription.set('');
+
+  // Safety: auto-release after MAX_PTT_MS so PTT can't get stuck
+  _pttTimer = setTimeout(stopPTT, MAX_PTT_MS);
+}
+
+export async function stopPTT() {
+  if (!_mediaRecorder || _mediaRecorder.state !== 'recording') return;
+  if (_pttTimer) { clearTimeout(_pttTimer); _pttTimer = null; }
+
+  await new Promise(resolve => {
+    _mediaRecorder.onstop = resolve;
+    _mediaRecorder.stop();
+  });
+
+  pttActive.set(false);
+  if (_audioChunks.length === 0) return;
+
+  // MediaRecorder default is audio/webm (Chromium/Tauri) — transcode to
+  // 16 kHz mono 16-bit PCM WAV so the backend gets standard audio.
+  const rawBlob = new Blob(_audioChunks, { type: _mediaRecorder.mimeType });
+  try {
+    const wavBytes = await _transcodeToWav(rawBlob);
+    sendMessage('pilot_audio', { audio: _toBase64(wavBytes) });
+  } catch (e) {
+    console.error('[audio] transcode failed:', e);
+  }
+}
+
+/** Decode any browser-recorded blob → resample to 16 kHz mono → PCM WAV bytes. */
+async function _transcodeToWav(blob) {
+  const STT_SR = 16_000;
+  const rawBuf = await blob.arrayBuffer();
+  const audioCtx = new AudioContext();
+  const decoded  = await audioCtx.decodeAudioData(rawBuf);
+  audioCtx.close();
+
+  // Resample to STT_SR using OfflineAudioContext
+  const frames = Math.ceil(decoded.duration * STT_SR);
+  const offline = new OfflineAudioContext(1, frames, STT_SR);
+  const src     = offline.createBufferSource();
+  src.buffer    = decoded;
+  src.connect(offline.destination);
+  src.start();
+  const rendered = await offline.startRendering();
+
+  // Float32 → Int16
+  const pcm   = rendered.getChannelData(0);
+  const int16 = new Int16Array(pcm.length);
+  for (let i = 0; i < pcm.length; i++) {
+    const s = Math.max(-1, Math.min(1, pcm[i]));
+    int16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+  }
+
+  // Build RIFF/WAVE header
+  const wav  = new ArrayBuffer(44 + int16.byteLength);
+  const view = new DataView(wav);
+  const str  = (off, s) => { for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i)); };
+  str(0, 'RIFF');
+  view.setUint32(4,  36 + int16.byteLength, true);
+  str(8, 'WAVE');
+  str(12, 'fmt ');
+  view.setUint32(16, 16, true);        // chunk size
+  view.setUint16(20, 1,  true);        // PCM
+  view.setUint16(22, 1,  true);        // mono
+  view.setUint32(24, STT_SR, true);    // sample rate
+  view.setUint32(28, STT_SR * 2, true);// byte rate
+  view.setUint16(32, 2,  true);        // block align
+  view.setUint16(34, 16, true);        // bits per sample
+  str(36, 'data');
+  view.setUint32(40, int16.byteLength, true);
+  new Int16Array(wav, 44).set(int16);
+
+  return new Uint8Array(wav);
+}
+
+/** base64-encode a Uint8Array in chunks to avoid arg-count stack overflow. */
+function _toBase64(bytes) {
+  let str = '';
+  const CHUNK = 8192;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    str += String.fromCharCode(...bytes.subarray(i, Math.min(i + CHUNK, bytes.length)));
+  }
+  return btoa(str);
+}
+
+function _playAtcAudio(b64) {
+  const binary = atob(b64);
+  const bytes  = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  const blob = new Blob([bytes], { type: 'audio/wav' });
+  const url  = URL.createObjectURL(blob);
+  const audio = new Audio(url);
+  audio.onended = () => URL.revokeObjectURL(url);
+  audio.play().catch(e => console.warn('[audio] play failed:', e));
+}
 
 const WS_URL = 'ws://localhost:8765';
 const RECONNECT_DELAY_MS = 3000;
@@ -20,6 +148,8 @@ function dispatch(msg) {
     case 'backend_status':
       backendUptime.set(msg.uptime_s);
       source.set(msg.source);
+      // Gate mic UI on backend capability, not just local mic permission
+      if (!msg.audio_ready) audioEnabled.set(false);
       break;
 
     case 'state_update':
@@ -56,9 +186,24 @@ function dispatch(msg) {
       scenarioName.set(msg.scenario_name ?? null);
       break;
 
+    case 'atc_audio':
+      _playAtcAudio(msg.audio);
+      break;
+
+    case 'transcription':
+      transcription.set(msg.text);
+      break;
+
+    case 'ptt_start':
+      startPTT();
+      break;
+
+    case 'ptt_end':
+      stopPTT();
+      break;
+
     case 'error':
       console.error('[backend]', msg.message);
-      // Show as a system message in the chat
       messages.update(list => [...list, {
         role: 'system',
         text: `⚠ ${msg.message}`,

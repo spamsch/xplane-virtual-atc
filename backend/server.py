@@ -11,6 +11,10 @@ Server → client event types:
                    on_ground, com1_mhz, com2_mhz, transponder, acf_icao, tail_number
   airport_detected icao, name, elevation_ft, runways[], frequencies[]
   atc_message      role ("pilot"|"atc"), text, model, timestamp
+  atc_audio        audio (base64 WAV), text, model, timestamp  [if AUDIO_ENABLED]
+  transcription    text                                        [if AUDIO_ENABLED]
+  ptt_start        (no payload) — X-Plane PTT button pressed  [if XPLANE_PTT_DATAREF set]
+  ptt_end          (no payload) — X-Plane PTT button released [if XPLANE_PTT_DATAREF set]
   thinking         thinking (bool)
   phase_change     phase, station
   source_change    source ("xplane"|"simulated"), scenario_name
@@ -18,11 +22,13 @@ Server → client event types:
 
 Client → server message types:
   pilot_transmission  text
+  pilot_audio         audio (base64 WAV from mic)             [if AUDIO_ENABLED]
   load_scenario       scenario (dict matching Scenario.to_dict())
   set_source          source ("xplane"|"simulated")
 """
 
 import asyncio
+import base64
 import json
 import logging
 import sys
@@ -48,6 +54,18 @@ from xplane.simulator import ScenarioSimulator, Scenario
 
 log = logging.getLogger(__name__)
 
+# ── Optional audio modules (require pip install -r requirements-audio.txt) ───
+
+_AUDIO_READY = False
+if config.AUDIO_ENABLED:
+    try:
+        from audio import radio as _audio_radio
+        from audio import tts   as _audio_tts
+        from audio import stt   as _audio_stt
+        _AUDIO_READY = True
+    except ImportError as _e:
+        log.warning(f"Audio modules unavailable ({_e}); running text-only.")
+
 # ------------------------------------------------------------------ #
 # Global state (single-process, no shared memory concerns)
 
@@ -57,9 +75,27 @@ _airport_db: Optional[AirportDB] = None
 _current_airport: Optional[Airport] = None
 _current_acft = None
 _session: Optional[ATCSession] = None
-_thinking: bool = False
+_thinking_count: int = 0         # in-flight transmissions; UI sees thinking=True when > 0
 _source: str = "simulated"
 _start_time: float = 0.0
+_prev_ptt: bool = False          # X-Plane PTT edge-detection
+_tx_lock: Optional[asyncio.Lock] = None   # serialise concurrent LLM calls
+
+MAX_AUDIO_BYTES = 2 * 1024 * 1024   # 2 MB ≈ 62 s at 16 kHz 16-bit mono
+
+
+async def _thinking_enter():
+    global _thinking_count
+    _thinking_count += 1
+    if _thinking_count == 1:
+        await _broadcast("thinking", thinking=True)
+
+
+async def _thinking_exit():
+    global _thinking_count
+    _thinking_count = max(0, _thinking_count - 1)
+    if _thinking_count == 0:
+        await _broadcast("thinking", thinking=False)
 
 
 # ------------------------------------------------------------------ #
@@ -131,7 +167,8 @@ async def _send_current_state(ws: WebSocketServerProtocol):
     await _send_to(ws, "backend_status",
                    uptime_s=int(time.time() - _start_time),
                    source=_source,
-                   airport_loaded=_current_airport is not None)
+                   airport_loaded=_current_airport is not None,
+                   audio_ready=_AUDIO_READY)
     if _driver:
         await _send_to(ws, "state_update", **_state_dict(_driver.state))
     if _current_airport:
@@ -172,6 +209,8 @@ async def _handle_client_message(msg: dict):
     t = msg.get("type")
     if t == "pilot_transmission":
         asyncio.create_task(_process_transmission(msg["text"]))
+    elif t == "pilot_audio":
+        asyncio.create_task(_process_audio_transmission(msg["audio"]))
     elif t == "load_scenario":
         await _load_scenario(msg["scenario"])
     elif t == "set_source":
@@ -181,8 +220,14 @@ async def _handle_client_message(msg: dict):
 async def _process_transmission(text: str):
     global _thinking, _session
 
-    _thinking = True
-    await _broadcast("thinking", thinking=True)
+    async with _tx_lock:
+        await _process_transmission_locked(text)
+
+
+async def _process_transmission_locked(text: str):
+    global _session
+
+    await _thinking_enter()
     await _broadcast("atc_message", role="pilot", text=text,
                      model=None, timestamp=time.time())
     try:
@@ -190,11 +235,24 @@ async def _process_transmission(text: str):
             await _broadcast("error", message="No active session — load a scenario first.")
             return
 
-        # session.process() is blocking (calls claude subprocess) — run in thread
+        # session.process() is blocking (calls claude subprocess)
         r = await asyncio.to_thread(_session.process, text)
 
         await _broadcast("atc_message", role="atc", text=r.text,
                          model=r.model, timestamp=time.time())
+
+        # Synthesize ATC audio (non-fatal if TTS unavailable)
+        if _AUDIO_READY:
+            try:
+                samples, sr = await asyncio.to_thread(_audio_tts.synthesize, r.text)
+                samples      = _audio_radio.apply_radio_fx(samples, sr)
+                wav_bytes    = _audio_radio.encode_wav(samples, sr)
+                await _broadcast("atc_audio",
+                                 audio=base64.b64encode(wav_bytes).decode(),
+                                 text=r.text, model=r.model,
+                                 timestamp=time.time())
+            except Exception as tts_err:
+                log.warning(f"TTS synthesis failed: {tts_err}")
 
         # Broadcast state changes so the UI updates immediately
         await _broadcast("phase_change",
@@ -211,8 +269,45 @@ async def _process_transmission(text: str):
         log.exception("Error generating ATC response")
         await _broadcast("error", message=f"ATC response failed: {e}")
     finally:
-        _thinking = False
-        await _broadcast("thinking", thinking=False)
+        await _thinking_exit()
+
+
+async def _process_audio_transmission(audio_b64: str):
+    """Transcribe pilot audio (base64 WAV) then route through the normal text path.
+
+    The thinking indicator is kept lit continuously from STT start through LLM
+    finish. Counter-based: audio path increments on entry, _process_transmission
+    increments again; the indicator clears only after both exit.
+    """
+    if not _AUDIO_READY:
+        await _broadcast("error", message="Audio (STT) not available — install requirements-audio.txt")
+        return
+
+    wav_bytes = base64.b64decode(audio_b64)
+    if len(wav_bytes) > MAX_AUDIO_BYTES:
+        await _broadcast("error", message="Audio clip too large (max 2 MB)")
+        return
+
+    await _thinking_enter()
+    try:
+        callsign = _session.callsign if _session else None
+        try:
+            text = await asyncio.to_thread(_audio_stt.transcribe, wav_bytes, callsign=callsign)
+        except Exception as e:
+            log.warning(f"STT transcription failed: {e}")
+            await _broadcast("error", message=f"STT failed: {e}")
+            return
+
+        if not text:
+            log.debug("STT returned empty transcript — ignoring")
+            return
+
+        await _broadcast("transcription", text=text)
+        # _process_transmission increments the counter while the LLM runs;
+        # our counter stays at ≥1 until both tasks exit their finally blocks.
+        await _process_transmission(text)
+    finally:
+        await _thinking_exit()
 
 
 async def _load_scenario(data: dict):
@@ -249,7 +344,13 @@ async def _load_scenario(data: dict):
 
 
 async def _set_source(source: str):
-    global _source
+    global _source, _prev_ptt
+    # Reset PTT edge-detection state so we don't emit a spurious ptt_end
+    # if the previous source had PTT active at the moment of the switch.
+    if _prev_ptt:
+        await _broadcast("ptt_end")
+    _prev_ptt = False
+
     if source == "xplane":
         # XPlane mode: start the real connector
         from xplane.connector import XPlaneConnector
@@ -257,6 +358,7 @@ async def _set_source(source: str):
             xplane_host=config.XPLANE_IP,
             xplane_port=config.XPLANE_UDP_PORT,
             local_port=config.LOCAL_RECV_PORT,
+            ptt_dataref=config.XPLANE_PTT_DATAREF,
         )
         try:
             connector.start()
@@ -358,6 +460,7 @@ async def _set_airport(airport: Airport, scenario: Optional[Scenario] = None):
 # Background loops
 
 async def _state_poll_loop():
+    global _prev_ptt
     last_airport_check = 0.0
 
     while True:
@@ -374,6 +477,16 @@ async def _state_poll_loop():
                         airport = _airport_db.nearest(state.lat, state.lon)
                         if airport and airport.icao != (_current_airport.icao if _current_airport else ""):
                             await _set_airport(airport)
+
+                    # X-Plane PTT edge detection (only when dataref is configured)
+                    if _source == "xplane" and config.XPLANE_PTT_DATAREF:
+                        ptt = state.ptt_active
+                        if ptt and not _prev_ptt:
+                            await _broadcast("ptt_start")
+                        elif not ptt and _prev_ptt:
+                            await _broadcast("ptt_end")
+                        _prev_ptt = ptt
+
             except Exception as e:
                 log.debug(f"State poll error: {e}")
 
@@ -385,7 +498,8 @@ async def _heartbeat_loop():
         await _broadcast("backend_status",
                          uptime_s=int(time.time() - _start_time),
                          source=_source,
-                         airport_loaded=_current_airport is not None)
+                         airport_loaded=_current_airport is not None,
+                         audio_ready=_AUDIO_READY)
         await asyncio.sleep(5.0)
 
 
@@ -402,8 +516,9 @@ def _find_apt_dat() -> Path:
 
 
 async def run():
-    global _airport_db, _driver, _start_time
+    global _airport_db, _driver, _start_time, _tx_lock
     _start_time = time.time()
+    _tx_lock    = asyncio.Lock()
 
     logging.basicConfig(level=logging.INFO,
                         format="%(levelname)s %(name)s: %(message)s")

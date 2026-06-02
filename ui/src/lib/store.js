@@ -24,6 +24,11 @@ export const thinking = writable(false);
 // UI
 export const scenarioDrawerOpen = writable(false);
 
+// Audio
+export const pttActive       = writable(false);   // mic is recording
+export const transcription   = writable('');      // last STT preview text
+export const audioEnabled    = writable(false);   // set true once mic permission granted
+
 // Derived: is the aircraft on the ground?
 export const onGround = derived(flightState, $s => $s?.on_ground ?? true);
 

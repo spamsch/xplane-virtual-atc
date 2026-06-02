@@ -1,7 +1,7 @@
 <script>
   import { tick } from 'svelte';
-  import { messages, thinking, atcCallsign, station } from './store.js';
-  import { sendTransmission } from './ws.js';
+  import { messages, thinking, atcCallsign, station, pttActive, transcription, audioEnabled } from './store.js';
+  import { sendTransmission, startPTT, stopPTT, requestMicPermission } from './ws.js';
 
   let input = $state('');
   let chatEl;
@@ -30,6 +30,23 @@
     }
   }
 
+  async function enableMic() {
+    const ok = await requestMicPermission();
+    if (ok) audioEnabled.set(true);
+  }
+
+  // Spacebar PTT — only when focus is not in the text input
+  function onWindowKeydown(e) {
+    if (e.code === 'Space' && !e.repeat && e.target.tagName !== 'TEXTAREA') {
+      e.preventDefault();
+      if ($audioEnabled) startPTT();
+    }
+  }
+
+  function onWindowKeyup(e) {
+    if (e.code === 'Space' && $audioEnabled && e.target.tagName !== 'TEXTAREA') stopPTT();
+  }
+
   // Auto-scroll to bottom on new messages
   $effect(() => {
     void $messages;
@@ -38,6 +55,8 @@
     });
   });
 </script>
+
+<svelte:window onkeydown={onWindowKeydown} onkeyup={onWindowKeyup} />
 
 <main class="radio-pane">
   <!-- Station header -->
@@ -93,6 +112,14 @@
     {/if}
   </div>
 
+  <!-- Transcription preview (shows what STT heard before LLM fires) -->
+  {#if $transcription}
+    <div class="transcription-preview">
+      <span class="tx-icon">🎙</span>
+      <span class="tx-text">{$transcription}</span>
+    </div>
+  {/if}
+
   <!-- Input -->
   <div class="input-row">
     <textarea
@@ -103,11 +130,28 @@
       rows="2"
       disabled={$thinking}
     ></textarea>
-    <button
-      class="tx-btn"
-      onclick={transmit}
-      disabled={$thinking || !input.trim()}
-    >▶ TX</button>
+    <div class="tx-btns">
+      {#if $audioEnabled}
+        <button
+          class="ptt-btn"
+          class:ptt-active={$pttActive}
+          onmousedown={startPTT}
+          onmouseup={stopPTT}
+          onmouseleave={stopPTT}
+          ontouchstart|preventDefault={startPTT}
+          ontouchend={stopPTT}
+          disabled={$thinking}
+          title="Push to Talk (or hold Space)"
+        >{$pttActive ? '● REC' : '🎙 PTT'}</button>
+      {:else}
+        <button class="mic-btn" onclick={enableMic} title="Enable microphone">🎙</button>
+      {/if}
+      <button
+        class="tx-btn"
+        onclick={transmit}
+        disabled={$thinking || !input.trim()}
+      >▶ TX</button>
+    </div>
   </div>
 </main>
 
@@ -247,6 +291,20 @@
     50%       { opacity: 1;   transform: scale(1.3); }
   }
 
+  .transcription-preview {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 14px;
+    font-size: 11px;
+    color: var(--accent-amber);
+    background: rgba(210,153,34,0.08);
+    border-top: 1px solid rgba(210,153,34,0.15);
+    flex-shrink: 0;
+  }
+  .tx-icon { flex-shrink: 0; }
+  .tx-text  { font-style: italic; }
+
   .input-row {
     display: flex;
     gap: 8px;
@@ -266,6 +324,13 @@
   }
   .tx-input:disabled { opacity: 0.5; }
 
+  .tx-btns {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    align-items: stretch;
+  }
+
   .tx-btn {
     padding: 8px 16px;
     background: var(--accent-blue);
@@ -276,8 +341,44 @@
     letter-spacing: 0.05em;
     transition: opacity 0.15s;
     white-space: nowrap;
-    align-self: flex-end;
   }
   .tx-btn:disabled { opacity: 0.4; cursor: default; }
   .tx-btn:not(:disabled):hover { opacity: 0.85; }
+
+  .ptt-btn {
+    padding: 8px 12px;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: var(--radius);
+    font-weight: 700;
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    transition: background 0.1s, border-color 0.1s;
+    white-space: nowrap;
+    user-select: none;
+  }
+  .ptt-btn:disabled { opacity: 0.4; cursor: default; }
+  .ptt-btn.ptt-active {
+    background: rgba(220,50,50,0.25);
+    border-color: rgba(220,50,50,0.6);
+    color: #ff6b6b;
+    animation: ptt-pulse 0.8s ease-in-out infinite;
+  }
+
+  .mic-btn {
+    padding: 8px 12px;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    border-radius: var(--radius);
+    font-size: 14px;
+    transition: opacity 0.15s;
+  }
+  .mic-btn:hover { opacity: 0.8; }
+
+  @keyframes ptt-pulse {
+    0%, 100% { opacity: 1; }
+    50%       { opacity: 0.6; }
+  }
 </style>
