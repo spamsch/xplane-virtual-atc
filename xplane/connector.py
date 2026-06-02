@@ -43,6 +43,7 @@ _IDX = {
 }
 _IDX_ICAO_BASE = 20   # indices 20-23 → 4 chars
 _IDX_TAIL_BASE = 30   # indices 30-39 → 10 chars
+_IDX_PTT       = 50   # optional PTT DataRef (configured at runtime)
 
 _SUBSCRIPTIONS: list = [
     (_IDX['lat'],       'sim/flightmodel/position/latitude',           5),
@@ -80,6 +81,7 @@ _IDX_TO_FIELD = {
     _IDX['com1']:      'com1_raw',
     _IDX['com2']:      'com2_raw',
     _IDX['xpdr']:      'transponder',
+    _IDX_PTT:          'ptt_pressed',
 }
 
 
@@ -98,6 +100,7 @@ class FlightState:
     com1_raw: float = 0.0   # units: 10 kHz steps (12175 = 121.75 MHz)
     com2_raw: float = 0.0
     transponder: float = 0.0
+    ptt_pressed: float = 0.0   # raw DataRef value; use ptt_active property
     _icao_chars: list = field(default_factory=lambda: [0.0] * 4)
     _tail_chars: list = field(default_factory=lambda: [0.0] * 10)
 
@@ -122,6 +125,10 @@ class FlightState:
         return ''.join(chr(int(c)) for c in self._tail_chars if 32 < c < 127).strip()
 
     @property
+    def ptt_active(self) -> bool:
+        return self.ptt_pressed > 0.5
+
+    @property
     def is_flight_loaded(self) -> bool:
         # Position (0,0) = X-Plane not in a flight / still at intro screen
         return abs(self.lat) > 0.01 or abs(self.lon) > 0.01
@@ -130,10 +137,12 @@ class FlightState:
 class XPlaneConnector:
     def __init__(self, xplane_host: str = '127.0.0.1',
                  xplane_port: int = 49000,
-                 local_port: int = 49001):
+                 local_port: int = 49001,
+                 ptt_dataref: str = ""):
         self._host = xplane_host
         self._port = xplane_port
         self._local_port = local_port
+        self._ptt_dataref = ptt_dataref   # empty string = disabled
         self._sock: Optional[socket.socket] = None
         self._state = FlightState()
         self._lock = threading.Lock()
@@ -172,12 +181,25 @@ class XPlaneConnector:
         for idx, path, freq in _SUBSCRIPTIONS:
             self._sock.sendto(self._make_rref_packet(freq, idx, path),
                               (self._host, self._port))
+        if self._ptt_dataref:
+            self._sock.sendto(
+                self._make_rref_packet(10, _IDX_PTT, self._ptt_dataref),
+                (self._host, self._port),
+            )
 
     def _unsubscribe_all(self):
         for idx, path, _ in _SUBSCRIPTIONS:
             try:
                 self._sock.sendto(self._make_rref_packet(0, idx, path),
                                   (self._host, self._port))
+            except Exception:
+                pass
+        if self._ptt_dataref:
+            try:
+                self._sock.sendto(
+                    self._make_rref_packet(0, _IDX_PTT, self._ptt_dataref),
+                    (self._host, self._port),
+                )
             except Exception:
                 pass
 

@@ -1,2 +1,4 @@
 websockets>=12.0
 pytest>=9.0
+numpy>=1.24      # needed for audio/ tests
+scipy>=1.10      # needed for audio/ tests
