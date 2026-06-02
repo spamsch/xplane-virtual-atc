@@ -57,6 +57,8 @@ TTS_BACKEND = os.environ.get("TTS_BACKEND", "auto")   # auto | openai | kokoro |
 TTS_VOICE          = os.environ.get("TTS_VOICE",          "onyx")
 OPENAI_API_KEY     = os.environ.get("OPENAI_API_KEY",     "")
 OPENAI_TTS_MODEL   = os.environ.get("OPENAI_TTS_MODEL",   "tts-1-hd")
+# STT: 'whisper-1' is the stable choice; 'gpt-4o-transcribe' is newer/better
+OPENAI_STT_MODEL   = os.environ.get("OPENAI_STT_MODEL",   "whisper-1")
 
 # X-Plane PTT DataRef — set to your PTT joystick button DataRef, e.g.:
 #   XPLANE_PTT_DATAREF=sim/joystick/joystick_button_array[32]

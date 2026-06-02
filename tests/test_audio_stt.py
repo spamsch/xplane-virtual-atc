@@ -1,5 +1,6 @@
 """
-Tests for audio.stt — faster-whisper is mocked; no model download required.
+Tests for audio.stt — all network and model calls mocked.
+No faster-whisper download or OpenAI API key required.
 """
 
 from __future__ import annotations
@@ -19,7 +20,7 @@ def _wav(secs: float = 1.0) -> bytes:
     return encode_wav(np.zeros(int(SR * secs), dtype=np.float32), SR)
 
 
-def _mock_model(transcript: str = "D-EIYD request startup") -> MagicMock:
+def _mock_local_model(transcript: str = "D-EIYD request startup") -> MagicMock:
     seg      = MagicMock()
     seg.text = transcript
     model    = MagicMock()
@@ -27,74 +28,79 @@ def _mock_model(transcript: str = "D-EIYD request startup") -> MagicMock:
     return model
 
 
-# ─────────────────────────────── transcribe ──────────────────────────────────
+# ──────────────────────── local backend (transcribe) ─────────────────────────
 
-class TestTranscribe:
+class TestTranscribeLocal:
 
-    @patch('audio.stt._load_model')
-    def test_returns_string(self, mock_load):
-        mock_load.return_value = _mock_model("Hannover Ground D-EIYD")
+    @patch('audio.stt._active_backend', return_value='local')
+    @patch('audio.stt._load_local_model')
+    def test_returns_string(self, mock_load, _):
+        mock_load.return_value = _mock_local_model("Hannover Ground D-EIYD")
         from audio.stt import transcribe
-        result = transcribe(_wav())
-        assert isinstance(result, str)
+        assert isinstance(transcribe(_wav()), str)
 
-    @patch('audio.stt._load_model')
-    def test_strips_leading_trailing_whitespace(self, mock_load):
-        mock_load.return_value = _mock_model("  hello world  ")
+    @patch('audio.stt._active_backend', return_value='local')
+    @patch('audio.stt._load_local_model')
+    def test_strips_whitespace(self, mock_load, _):
+        mock_load.return_value = _mock_local_model("  hello world  ")
         from audio.stt import transcribe
         assert transcribe(_wav()) == "hello world"
 
-    @patch('audio.stt._load_model')
-    def test_joins_multiple_segments(self, mock_load):
+    @patch('audio.stt._active_backend', return_value='local')
+    @patch('audio.stt._load_local_model')
+    def test_joins_multiple_segments(self, mock_load, _):
         seg1, seg2 = MagicMock(), MagicMock()
-        seg1.text  = "Hannover Ground"
-        seg2.text  = "request startup"
-        model      = MagicMock()
+        seg1.text, seg2.text = "Hannover Ground", "request startup"
+        model = MagicMock()
         model.transcribe.return_value = ([seg1, seg2], MagicMock())
         mock_load.return_value = model
         from audio.stt import transcribe
         assert transcribe(_wav()) == "Hannover Ground request startup"
 
-    @patch('audio.stt._load_model')
-    def test_callsign_in_initial_prompt(self, mock_load):
-        model = _mock_model("test")
+    @patch('audio.stt._active_backend', return_value='local')
+    @patch('audio.stt._load_local_model')
+    def test_callsign_in_prompt(self, mock_load, _):
+        model = _mock_local_model("test")
         mock_load.return_value = model
         from audio.stt import transcribe
         transcribe(_wav(), callsign="D-EIYD")
         _, kwargs = model.transcribe.call_args
         assert "D-EIYD" in kwargs.get('initial_prompt', '')
 
-    @patch('audio.stt._load_model')
-    def test_no_callsign_still_has_nato_prompt(self, mock_load):
-        model = _mock_model("test")
+    @patch('audio.stt._active_backend', return_value='local')
+    @patch('audio.stt._load_local_model')
+    def test_nato_in_prompt(self, mock_load, _):
+        model = _mock_local_model("test")
         mock_load.return_value = model
         from audio.stt import transcribe
         transcribe(_wav())
         _, kwargs = model.transcribe.call_args
         prompt = kwargs.get('initial_prompt', '')
-        assert 'Alpha' in prompt
-        assert 'squawk' in prompt
+        assert 'Alpha' in prompt and 'squawk' in prompt
 
-    @patch('audio.stt._load_model')
-    def test_language_forced_to_english(self, mock_load):
-        model = _mock_model("test")
+    @patch('audio.stt._active_backend', return_value='local')
+    @patch('audio.stt._load_local_model')
+    def test_language_english(self, mock_load, _):
+        model = _mock_local_model("test")
         mock_load.return_value = model
         from audio.stt import transcribe
         transcribe(_wav())
         _, kwargs = model.transcribe.call_args
         assert kwargs.get('language') == 'en'
 
-    @patch('audio.stt._load_model')
-    def test_empty_segments_returns_empty_string(self, mock_load):
+    @patch('audio.stt._active_backend', return_value='local')
+    @patch('audio.stt._load_local_model')
+    def test_empty_segments_returns_empty(self, mock_load, _):
         model = MagicMock()
         model.transcribe.return_value = ([], MagicMock())
         mock_load.return_value = model
         from audio.stt import transcribe
         assert transcribe(_wav()) == ""
 
-    @patch('audio.stt._load_model')
-    def test_temp_file_removed_after_transcription(self, mock_load):
-        mock_load.return_value = _mock_model("test")
+    @patch('audio.stt._active_backend', return_value='local')
+    @patch('audio.stt._load_local_model')
+    def test_temp_file_cleaned_up(self, mock_load, _):
+        mock_load.return_value = _mock_local_model("test")
         removed = []
         import pathlib
         original_unlink = pathlib.Path.unlink
@@ -109,18 +115,64 @@ class TestTranscribe:
         assert any('.wav' in p for p in removed)
 
 
-# ─────────────────────────────── _load_model ─────────────────────────────────
+# ──────────────────────── OpenAI backend (transcribe) ────────────────────────
 
-class TestLoadModel:
+class TestTranscribeOpenAI:
 
-    def test_raises_without_faster_whisper_installed(self):
+    @patch('audio.stt._active_backend', return_value='openai')
+    @patch('audio.stt._transcribe_openai', return_value="Hannover Ground")
+    def test_routes_to_openai(self, mock_api, _):
+        from audio.stt import transcribe
+        result = transcribe(_wav(), callsign="D-EIYD")
+        mock_api.assert_called_once_with(_wav(), "D-EIYD")
+        assert result == "Hannover Ground"
+
+    @patch('audio.stt._active_backend', return_value='openai')
+    @patch('audio.stt._transcribe_openai', return_value="  trimmed  ")
+    def test_openai_result_stripped(self, mock_api, _):
+        from audio.stt import transcribe
+        assert transcribe(_wav()) == "trimmed"
+
+
+# ─────────────────────── backend selection (_active_backend) ─────────────────
+
+class TestActiveBackend:
+
+    @patch('audio.stt.config')
+    def test_openai_when_key_set(self, mock_cfg):
+        mock_cfg.OPENAI_API_KEY = 'sk-test'
+        import os
+        with patch.dict(os.environ, {'STT_BACKEND': 'auto'}):
+            from audio.stt import _active_backend
+            assert _active_backend() == 'openai'
+
+    @patch('audio.stt.config')
+    def test_local_when_no_key(self, mock_cfg):
+        mock_cfg.OPENAI_API_KEY = ''
+        import os
+        with patch.dict(os.environ, {'STT_BACKEND': 'auto'}):
+            from audio.stt import _active_backend
+            assert _active_backend() == 'local'
+
+    def test_explicit_override(self):
+        import os
+        with patch.dict(os.environ, {'STT_BACKEND': 'local'}):
+            from audio.stt import _active_backend
+            assert _active_backend() == 'local'
+
+
+# ─────────────────────── local model loading ─────────────────────────────────
+
+class TestLocalModel:
+
+    def test_raises_without_faster_whisper(self):
         import audio.stt as stt_mod
         original = stt_mod._model
         stt_mod._model = None
         try:
             with patch.dict(sys.modules, {'faster_whisper': None}):
                 with pytest.raises(RuntimeError, match='faster-whisper'):
-                    stt_mod._load_model()
+                    stt_mod._load_local_model()
         finally:
             stt_mod._model = original
 
@@ -130,13 +182,12 @@ class TestLoadModel:
         stt_mod._model = None
         try:
             mock_cls = MagicMock()
-            mock_instance = MagicMock()
-            mock_cls.return_value = mock_instance
+            mock_cls.return_value = MagicMock()
             fake_fw = MagicMock()
             fake_fw.WhisperModel = mock_cls
             with patch.dict(sys.modules, {'faster_whisper': fake_fw}):
-                m1 = stt_mod._load_model()
-                m2 = stt_mod._load_model()
+                m1 = stt_mod._load_local_model()
+                m2 = stt_mod._load_local_model()
             assert m1 is m2
             mock_cls.assert_called_once()
         finally:
