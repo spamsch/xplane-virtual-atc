@@ -36,9 +36,12 @@ _CACHE_DIR = Path.home() / ".cache" / "xplane-vatc" / "piper"
 _VOICE_PATHS: dict[str, str] = {
     "en_US-lessac-medium": "en/en_US/lessac/medium",
     "en_US-lessac-high":   "en/en_US/lessac/high",
-    "en_GB-alba-medium":   "en/en_GB/alba/medium",
     "en_US-ryan-medium":   "en/en_US/ryan/medium",
     "en_US-ryan-high":     "en/en_US/ryan/high",
+    "en_US-danny-low":     "en/en_US/danny/low",
+    "en_US-joe-medium":    "en/en_US/joe/medium",
+    "en_GB-alan-low":      "en/en_GB/alan/low",
+    "en_GB-alba-medium":   "en/en_GB/alba/medium",
 }
 _HF_BASE = "https://huggingface.co/rhasspy/piper-voices/resolve/main"
 

@@ -50,7 +50,12 @@ STT_MODEL = os.environ.get("STT_MODEL", "large-v3")
 # TTS — backend: 'auto' | 'piper' | 'say'
 # 'auto' uses piper if installed, else macOS say
 TTS_BACKEND = os.environ.get("TTS_BACKEND", "auto")
-TTS_VOICE   = os.environ.get("TTS_VOICE",   "en_US-lessac-medium")
+# Voice options (all Piper, all available at rhasspy/piper-voices on HuggingFace):
+#   en_US-lessac-high   — clear American female, high quality (default)
+#   en_US-ryan-high     — American male, flatter/more measured, good for ATC
+#   en_US-danny-low     — male, faster but lower fidelity
+#   en_GB-alan-low      — British male
+TTS_VOICE   = os.environ.get("TTS_VOICE",   "en_US-lessac-high")
 
 # X-Plane PTT DataRef — set to your PTT joystick button DataRef, e.g.:
 #   XPLANE_PTT_DATAREF=sim/joystick/joystick_button_array[32]
