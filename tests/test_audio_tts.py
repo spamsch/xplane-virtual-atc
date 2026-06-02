@@ -103,22 +103,39 @@ class TestBackendSay:
 
 class TestSynthesize:
 
+    @patch('audio.tts._kokoro_available', return_value=False)
     @patch('audio.tts._piper_available', return_value=False)
     @patch('audio.tts._backend_say')
-    def test_auto_falls_back_to_say(self, mock_say, _):
+    def test_auto_falls_back_to_say(self, mock_say, _piper, _kokoro):
         mock_say.return_value = (np.zeros(100, dtype=np.float32), 22_050)
         from audio.tts import synthesize
         samples, sr = synthesize("test", backend='auto')
         mock_say.assert_called_once()
         assert samples.dtype == np.float32
 
+    @patch('audio.tts._kokoro_available', return_value=False)
     @patch('audio.tts._piper_available', return_value=True)
     @patch('audio.tts._backend_piper')
-    def test_auto_prefers_piper_when_available(self, mock_piper, _):
+    def test_auto_prefers_piper_over_say(self, mock_piper, _piper, _kokoro):
         mock_piper.return_value = (np.zeros(100, dtype=np.float32), 22_050)
         from audio.tts import synthesize
         synthesize("test", backend='auto')
         mock_piper.assert_called_once()
+
+    @patch('audio.tts._kokoro_available', return_value=True)
+    @patch('audio.tts._backend_kokoro')
+    def test_auto_prefers_kokoro_over_piper(self, mock_kokoro, _):
+        mock_kokoro.return_value = (np.zeros(100, dtype=np.float32), 24_000)
+        from audio.tts import synthesize
+        synthesize("test", backend='auto')
+        mock_kokoro.assert_called_once()
+
+    @patch('audio.tts._backend_kokoro')
+    def test_explicit_kokoro_backend(self, mock_kokoro):
+        mock_kokoro.return_value = (np.zeros(100, dtype=np.float32), 24_000)
+        from audio.tts import synthesize
+        synthesize("test", backend='kokoro', voice='am_adam')
+        mock_kokoro.assert_called_once_with("test", 'am_adam')
 
     @patch('audio.tts._backend_say')
     def test_explicit_say_backend(self, mock_say):
@@ -139,9 +156,10 @@ class TestSynthesize:
         with pytest.raises(ValueError, match='Unknown TTS backend'):
             synthesize("test", backend='cosmic_ray')
 
+    @patch('audio.tts._kokoro_available', return_value=False)
     @patch('audio.tts._piper_available', return_value=False)
     @patch('audio.tts._backend_say')
-    def test_returns_tuple_of_array_and_int(self, mock_say, _):
+    def test_returns_tuple_of_array_and_int(self, mock_say, _piper, _kokoro):
         mock_say.return_value = (np.zeros(100, dtype=np.float32), 22_050)
         from audio.tts import synthesize
         result = synthesize("test")
