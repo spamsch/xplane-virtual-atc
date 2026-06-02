@@ -1,0 +1,23 @@
+{
+  "name": "EDDG Arrival from East",
+  "description": "C172 D-EIYD inbound to Münster/Osnabrück, 10nm east of the field. Wind 250/6, QNH 1018, ATIS Delta. Expect runway 25.",
+  "aircraft": {
+    "icao": "C172",
+    "callsign": "D-EIYD"
+  },
+  "departure_airport": "EDDG",
+  "conditions": {
+    "qnh": 1018,
+    "wind_dir": 250,
+    "wind_kts": 6,
+    "visibility_km": 15,
+    "atis": "Delta"
+  },
+  "position": {
+    "lat": 52.134,
+    "lon": 7.900,
+    "alt_ft": 2500,
+    "heading": 270,
+    "on_ground": false
+  }
+}

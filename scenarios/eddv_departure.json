@@ -1,0 +1,23 @@
+{
+  "name": "EDDV Standard Departure",
+  "description": "C172 D-EIYD on the GA apron at Hannover. Wind 270/8, QNH 1018, ATIS Charlie. Expect runway 27L.",
+  "aircraft": {
+    "icao": "C172",
+    "callsign": "D-EIYD"
+  },
+  "departure_airport": "EDDV",
+  "conditions": {
+    "qnh": 1018,
+    "wind_dir": 270,
+    "wind_kts": 8,
+    "visibility_km": 10,
+    "atis": "Charlie"
+  },
+  "position": {
+    "lat": 52.4608,
+    "lon": 9.6900,
+    "alt_ft": 183,
+    "heading": 270,
+    "on_ground": true
+  }
+}

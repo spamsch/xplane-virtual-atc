@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# APT.DAT pickle cache (regenerated automatically, can be 100s of MB)
+*.pickle
+
+# macOS
+.DS_Store
+
+# UI — Node
+ui/node_modules/
+ui/.svelte-kit/
+ui/build/
+ui/dist/
+
+# UI — Tauri / Rust
+ui/src-tauri/target/
+
+# Docs build artifacts
+docs/*.pdf

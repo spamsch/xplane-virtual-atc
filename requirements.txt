@@ -1,0 +1,7 @@
+# No external dependencies — uses Python standard library only.
+# Runtime requirements:
+#   - Python 3.9+
+#   - X-Plane 12 with UDP output enabled (Settings > Network > Receive data)
+#   - claude CLI installed and authenticated (https://claude.ai/code)
+#
+# Set XPLANE_PATH env var if X-Plane is not in /Applications/X-Plane 12
