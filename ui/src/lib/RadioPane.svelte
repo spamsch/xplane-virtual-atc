@@ -138,7 +138,7 @@
           onmousedown={startPTT}
           onmouseup={stopPTT}
           onmouseleave={stopPTT}
-          ontouchstart|preventDefault={startPTT}
+          ontouchstart={(e) => { e.preventDefault(); startPTT(); }}
           ontouchend={stopPTT}
           disabled={$thinking}
           title="Push to Talk (or hold Space)"

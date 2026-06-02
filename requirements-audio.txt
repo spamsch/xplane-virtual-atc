@@ -9,5 +9,5 @@
 numpy>=1.24
 scipy>=1.10
 faster-whisper>=1.0       # STT: ATC-fine-tuned Whisper via CTranslate2
-piper-tts>=2.0            # TTS: local ONNX voice synthesis (optional; say fallback works without it)
+piper-tts>=1.1            # TTS: local ONNX voice synthesis (optional; say fallback works without it)
 sounddevice>=0.4          # CLI PTT recording only (not needed for Tauri UI path)
