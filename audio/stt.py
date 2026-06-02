@@ -101,12 +101,10 @@ def check_openai() -> bool:
         log.info(
             f"OpenAI STT configured — model={config.OPENAI_STT_MODEL!r}. Verifying key…"
         )
-        # Minimal WAV: 44-byte header + 2 bytes of silence = valid but tiny
-        silence = (
-            b"RIFF\x24\x00\x00\x00WAVEfmt \x10\x00\x00\x00"
-            b"\x01\x00\x01\x00\x80\x3e\x00\x00\x00\x7d\x00\x00"
-            b"\x02\x00\x10\x00data\x02\x00\x00\x00\x00\x00"
-        )
+        # 0.2 s of silence at 16 kHz — above the API's 0.1 s minimum
+        from audio.radio import encode_wav
+        import numpy as np
+        silence = encode_wav(np.zeros(3200, dtype=np.float32), 16_000)
         _transcribe_openai(silence, callsign=None)
         log.info("OpenAI STT key verified OK.")
         return True
