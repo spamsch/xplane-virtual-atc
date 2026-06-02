@@ -34,7 +34,13 @@ _ATC_PROMPT = (
     "QNH QFE QTE affirm negative roger wilco"
 )
 
-_model = None   # faster_whisper.WhisperModel, lazy-loaded on first transcribe()
+_model = None   # faster_whisper.WhisperModel, loaded at server startup via preload()
+
+
+def preload():
+    """Download and initialise the Whisper model at startup (blocking).
+    Call once from the server's run() so the first PTT press isn't delayed."""
+    _load_model()
 
 
 def _load_model():
