@@ -49,15 +49,14 @@ STT_MODEL = os.environ.get("STT_MODEL", "large-v3")
 
 # TTS — backend: 'auto' | 'piper' | 'say'
 # 'auto' uses piper if installed, else macOS say
-TTS_BACKEND = os.environ.get("TTS_BACKEND", "auto")   # auto | kokoro | piper | say
+TTS_BACKEND = os.environ.get("TTS_BACKEND", "auto")   # auto | openai | kokoro | piper | say
 # Voice name — meaning depends on backend:
-#   kokoro voices (American male, good for ATC):
-#     am_adam, am_michael, am_echo, am_liam, am_onyx
-#   kokoro voices (American female):
-#     af_sarah, af_nicole, af_heart, af_sky
-#   piper voices:
-#     en_US-lessac-high, en_US-ryan-high, en_US-joe-medium
-TTS_VOICE   = os.environ.get("TTS_VOICE",   "am_adam")
+#   openai:  onyx (deep male), echo, alloy, fable, nova, shimmer
+#   kokoro:  am_adam, am_michael, am_echo (male); af_sarah, af_nicole (female)
+#   piper:   en_US-lessac-high, en_US-ryan-high, en_US-joe-medium
+TTS_VOICE          = os.environ.get("TTS_VOICE",          "onyx")
+OPENAI_API_KEY     = os.environ.get("OPENAI_API_KEY",     "")
+OPENAI_TTS_MODEL   = os.environ.get("OPENAI_TTS_MODEL",   "tts-1-hd")
 
 # X-Plane PTT DataRef — set to your PTT joystick button DataRef, e.g.:
 #   XPLANE_PTT_DATAREF=sim/joystick/joystick_button_array[32]

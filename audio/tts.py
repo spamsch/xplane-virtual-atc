@@ -2,11 +2,12 @@
 TTS synthesis — clean audio only; radio DSP is applied separately in radio.py.
 
 Backends (resolved via TTS_BACKEND in config, or 'auto'):
-  kokoro  — Kokoro-82M int8 ONNX; pip install kokoro-onnx; best quality
+  openai  — OpenAI TTS API (tts-1-hd); best quality; needs OPENAI_API_KEY
+  kokoro  — Kokoro-82M int8 ONNX; pip install kokoro-onnx; good local quality
   piper   — Piper ONNX voices; pip install piper-tts
   say     — macOS `say` built-in; always available, zero deps
 
-'auto' prefers kokoro → piper → say based on what's installed.
+'auto' prefers openai (if key set) → kokoro → piper → say.
 
 Public API:
   synthesize(text, *, voice=None, backend=None) -> (np.ndarray[float32], int)
@@ -15,6 +16,7 @@ Public API:
 from __future__ import annotations
 
 import io
+import json
 import logging
 import shutil
 import subprocess
@@ -52,6 +54,33 @@ _KOKORO_CACHE_DIR = Path.home() / ".cache" / "xplane-vatc" / "kokoro"
 _KOKORO_MODEL_URL  = "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.int8.onnx"
 _KOKORO_VOICES_URL = "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin"
 _kokoro_instance = None   # lazy singleton
+
+
+# ─────────────────────────── OpenAI TTS backend ──────────────────────────────
+
+def _backend_openai(text: str, voice: str) -> tuple[np.ndarray, int]:
+    if not config.OPENAI_API_KEY:
+        raise RuntimeError("OPENAI_API_KEY is not set")
+
+    payload = json.dumps({
+        "model": config.OPENAI_TTS_MODEL,
+        "input": text,
+        "voice": voice,
+        "response_format": "wav",
+    }).encode()
+
+    req = urllib.request.Request(
+        "https://api.openai.com/v1/audio/speech",
+        data=payload,
+        headers={
+            "Authorization": f"Bearer {config.OPENAI_API_KEY}",
+            "Content-Type": "application/json",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        wav_bytes = resp.read()
+
+    return decode_wav(wav_bytes)
 
 
 # ─────────────────────────── Kokoro helpers ──────────────────────────────────
@@ -191,13 +220,17 @@ def synthesize(
     resolved_voice   = voice   or config.TTS_VOICE
 
     if resolved_backend == 'auto':
-        if _kokoro_available():
+        if config.OPENAI_API_KEY:
+            resolved_backend = 'openai'
+        elif _kokoro_available():
             resolved_backend = 'kokoro'
         elif _piper_available():
             resolved_backend = 'piper'
         else:
             resolved_backend = 'say'
 
+    if resolved_backend == 'openai':
+        return _backend_openai(text, resolved_voice)
     if resolved_backend == 'kokoro':
         return _backend_kokoro(text, resolved_voice)
     if resolved_backend == 'piper':

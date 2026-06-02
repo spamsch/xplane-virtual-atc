@@ -103,32 +103,55 @@ class TestBackendSay:
 
 class TestSynthesize:
 
+    @patch('audio.tts.config')
     @patch('audio.tts._kokoro_available', return_value=False)
     @patch('audio.tts._piper_available', return_value=False)
     @patch('audio.tts._backend_say')
-    def test_auto_falls_back_to_say(self, mock_say, _piper, _kokoro):
+    def test_auto_falls_back_to_say(self, mock_say, _piper, _kokoro, mock_cfg):
+        mock_cfg.OPENAI_API_KEY = ''
+        mock_cfg.TTS_BACKEND = 'auto'
+        mock_cfg.TTS_VOICE = 'onyx'
         mock_say.return_value = (np.zeros(100, dtype=np.float32), 22_050)
         from audio.tts import synthesize
         samples, sr = synthesize("test", backend='auto')
         mock_say.assert_called_once()
         assert samples.dtype == np.float32
 
+    @patch('audio.tts.config')
     @patch('audio.tts._kokoro_available', return_value=False)
     @patch('audio.tts._piper_available', return_value=True)
     @patch('audio.tts._backend_piper')
-    def test_auto_prefers_piper_over_say(self, mock_piper, _piper, _kokoro):
+    def test_auto_prefers_piper_over_say(self, mock_piper, _piper, _kokoro, mock_cfg):
+        mock_cfg.OPENAI_API_KEY = ''
+        mock_cfg.TTS_BACKEND = 'auto'
+        mock_cfg.TTS_VOICE = 'en_US-lessac-high'
         mock_piper.return_value = (np.zeros(100, dtype=np.float32), 22_050)
         from audio.tts import synthesize
         synthesize("test", backend='auto')
         mock_piper.assert_called_once()
 
+    @patch('audio.tts.config')
     @patch('audio.tts._kokoro_available', return_value=True)
     @patch('audio.tts._backend_kokoro')
-    def test_auto_prefers_kokoro_over_piper(self, mock_kokoro, _):
+    def test_auto_prefers_kokoro_over_piper(self, mock_kokoro, _kokoro, mock_cfg):
+        mock_cfg.OPENAI_API_KEY = ''
+        mock_cfg.TTS_BACKEND = 'auto'
+        mock_cfg.TTS_VOICE = 'am_adam'
         mock_kokoro.return_value = (np.zeros(100, dtype=np.float32), 24_000)
         from audio.tts import synthesize
         synthesize("test", backend='auto')
         mock_kokoro.assert_called_once()
+
+    @patch('audio.tts.config')
+    @patch('audio.tts._backend_openai')
+    def test_auto_prefers_openai_when_key_set(self, mock_openai, mock_cfg):
+        mock_cfg.OPENAI_API_KEY = 'sk-test'
+        mock_cfg.TTS_BACKEND = 'auto'
+        mock_cfg.TTS_VOICE = 'onyx'
+        mock_openai.return_value = (np.zeros(100, dtype=np.float32), 24_000)
+        from audio.tts import synthesize
+        synthesize("test", backend='auto')
+        mock_openai.assert_called_once()
 
     @patch('audio.tts._backend_kokoro')
     def test_explicit_kokoro_backend(self, mock_kokoro):
