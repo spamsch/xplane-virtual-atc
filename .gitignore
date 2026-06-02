@@ -20,3 +20,7 @@ ui/src-tauri/target/
 
 # Docs build artifacts
 docs/*.pdf
+
+# Local secrets — never commit
+.env
+.venv/

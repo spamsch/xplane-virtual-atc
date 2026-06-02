@@ -57,7 +57,10 @@ def _load_model():
         ) from None
 
     log.info(f"Loading Whisper model {config.STT_MODEL!r} (first use — may download)…")
-    _model = WhisperModel(config.STT_MODEL, device="cpu", compute_type="int8")
+    kwargs = dict(device="cpu", compute_type="int8")
+    if config.HF_TOKEN:
+        kwargs["huggingface_token"] = config.HF_TOKEN
+    _model = WhisperModel(config.STT_MODEL, **kwargs)
     log.info("Whisper model ready.")
     return _model
 

@@ -1,6 +1,16 @@
 import os
 from pathlib import Path
 
+# Load .env from the project root (if present) before reading any env vars.
+# Simple parser: KEY=VALUE lines, ignores comments and blanks. No extra deps.
+_env_file = Path(__file__).parent / ".env"
+if _env_file.exists():
+    for _line in _env_file.read_text().splitlines():
+        _line = _line.strip()
+        if _line and not _line.startswith("#") and "=" in _line:
+            _k, _, _v = _line.partition("=")
+            os.environ.setdefault(_k.strip(), _v.strip())
+
 XPLANE_IP = os.environ.get("XPLANE_IP", "127.0.0.1")
 XPLANE_UDP_PORT = int(os.environ.get("XPLANE_PORT", "49000"))
 LOCAL_RECV_PORT = int(os.environ.get("LOCAL_PORT", "49001"))
@@ -47,3 +57,6 @@ TTS_VOICE   = os.environ.get("TTS_VOICE",   "en_US-lessac-medium")
 # Use X-Plane's DataRef browser (DataRefTool plugin) to find the right index.
 # Leave empty to disable X-Plane PTT detection; use the UI button instead.
 XPLANE_PTT_DATAREF = os.environ.get("XPLANE_PTT_DATAREF", "")
+
+# HuggingFace token — loaded from .env; used for authenticated model downloads
+HF_TOKEN = os.environ.get("HF_TOKEN", "")
