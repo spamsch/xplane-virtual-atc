@@ -256,11 +256,11 @@ class TestProcess:
         assert isinstance(r, ATCResponse)
         assert r.text
 
-    def test_phase_stays_pre_departure_on_ground_call(self, eddv, eddg, c172, conditions):
+    def test_phase_advances_to_taxiing_on_taxi_clearance(self, eddv, eddg, c172, conditions):
         s = make_session(eddv, eddg, c172, conditions)
-        with mock_respond("Startup approved, taxi Alpha, hold short 27L."):
+        with mock_respond("Startup approved, taxi to holding point Alpha, hold short 27L."):
             r = s.process("Hannover Ground, D-EIYD, request startup.")
-        assert r.phase_after == Phase.PRE_DEPARTURE
+        assert r.phase_after == Phase.TAXIING
 
     def test_qnh_extracted_from_ground_response(self, eddv, eddg, c172, conditions):
         s = make_session(eddv, eddg, c172, conditions)

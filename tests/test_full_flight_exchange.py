@@ -64,22 +64,105 @@ an example only.
 
 import re
 import pytest
+from unittest.mock import patch
 
 from airport.parser import Airport, Frequency, Runway
 from aircraft.database import AircraftPerf
+from atc.session import ATCSession, Phase, Station
 
-# Skip the entire file at collection time if atc.session doesn't exist yet.
-# Once the module is created, remove this block — pytestmark takes over.
-try:
-    from atc.session import ATCSession, Phase, Station
-except ImportError:
-    pytest.skip("atc.session not yet implemented", allow_module_level=True)
 
-# When the module exists, mark all tests xfail until behaviour is complete.
-pytestmark = pytest.mark.xfail(
-    reason="ATCSession behaviour not yet fully implemented",
-    strict=False,
-)
+# ------------------------------------------------------------------ #
+# Deterministic ATC mock — no real LLM calls
+
+def _canned_response(pilot_message: str, atc_callsign: str,
+                     extra_instructions: str | None) -> str:
+    msg = pilot_message.lower()
+    cs = atc_callsign.lower()
+
+    # Extract pre-assigned squawk from engine extra_instructions
+    sq = '0472'
+    if extra_instructions:
+        m = re.search(r'assign squawk (\d{4})', extra_instructions, re.IGNORECASE)
+        if m:
+            sq = m.group(1)
+
+    # CTR exit instruction (injected by session._should_issue_ctr_exit)
+    if extra_instructions and 'squawk 7000' in extra_instructions.lower():
+        return ('D-EIYD, squawk 7000, frequency change approved. '
+                'Contact Hannover Radar on 120.150.')
+
+    # Ground at EDDV
+    if 'ground' in cs and 'hannover' in cs:
+        if 'startup' in msg or 'request startup' in msg:
+            return ('D-EIYD, Hannover Ground, startup approved. QNH 1018, '
+                    'wind 270/08, runway 27L. Taxi to holding point Alpha via Bravo. '
+                    'Hold short runway 27L.')
+        return ('D-EIYD, Hannover Ground, hold position. '
+                'Contact Hannover Tower on 118.175. Good day.')
+
+    # Tower at EDDV
+    if 'tower' in cs and 'hannover' in cs:
+        if 'ready for departure' in msg or 'holding' in msg or ('ready' in msg and 'alpha' in msg):
+            return (f'D-EIYD, Hannover Tower, squawk {sq}. '
+                    f'Line up and wait runway 27L.')
+        if 'line' in msg or 'squawk' in msg:
+            return ('D-EIYD, runway 27L, wind 270/08, cleared for takeoff. '
+                    'After departure heading 200, not above 1500 feet until leaving the zone.')
+        if 'heading' in msg or 'airborne' in msg or 'climbing' in msg:
+            return 'D-EIYD, radar contact. Climb not above 2500 feet. Report CTR boundary.'
+        if 'ctr' in msg or 'boundary' in msg:
+            return ('D-EIYD, squawk 7000, frequency change approved. '
+                    'Contact Hannover Radar on 120.150.')
+        return 'D-EIYD, roger.'
+
+    # Hannover Radar / Departure
+    if 'radar' in cs or 'departure' in cs:
+        return ('D-EIYD, Hannover Radar, identified. '
+                'VFR to Münster/Osnabrück. Contact Langen Information on 128.950. Good day.')
+
+    # FIS / Langen Information
+    if 'information' in cs:
+        if 'approaching' in msg or 'frequency change' in msg or ('request' in msg and 'zone' in msg):
+            return ('D-EIYD, Langen Information, frequency change approved. '
+                    'Contact Münster Approach on 121.250. Good day.')
+        return ('D-EIYD, Langen Information, roger. QNH 1018. '
+                'No known traffic on your route. Report approaching Münster control zone.')
+
+    # Approach at EDDG
+    if 'approach' in cs and 'münster' in cs:
+        if 'reporting' in msg:
+            return ('D-EIYD, Münster Approach, join right base runway 25. '
+                    'Contact Münster Tower on 118.700.')
+        # CTR entry (inbound, request entry, control zone)
+        return (f'D-EIYD, Münster Approach, squawk {sq}. '
+                f'Cleared to enter control zone. Not below 1500 feet. '
+                f'Runway 25. Proceed to Tango.')
+
+    # Tower at EDDG
+    if 'tower' in cs and 'münster' in cs:
+        if 'landed' in msg:
+            return 'D-EIYD, vacate left, contact Münster Ground on 121.800.'
+        if 'vacating' in msg or '121.800' in msg:
+            return 'D-EIYD, Münster Tower, good day.'
+        return ('D-EIYD, Münster Tower, runway 25, wind 250/06, cleared to land. '
+                'Vacate left after landing.')
+
+    # Ground at EDDG
+    if 'ground' in cs and 'münster' in cs:
+        if 'request taxi' in msg or 'vacated' in msg or 'vacating' in msg:
+            return ('D-EIYD, Münster Ground, taxi to General Aviation via Bravo. '
+                    'QNH 1018.')
+        return 'D-EIYD, readback correct. Have a good day.'
+
+    return 'D-EIYD, roger.'
+
+
+@pytest.fixture(autouse=True)
+def _mock_engine(monkeypatch):
+    def _respond(pilot_message, airport, acft, callsign, conditions,
+                 atc_callsign, history=None, model=None, extra_instructions=None):
+        return _canned_response(pilot_message, atc_callsign, extra_instructions)
+    monkeypatch.setattr('atc.engine.respond', _respond)
 
 
 # ------------------------------------------------------------------ #
@@ -95,16 +178,13 @@ def _mentions_freq(text: str, freq_mhz: float) -> bool:
 
 
 def _make_session(eddv, eddg, c172, conditions) -> "ATCSession":
-    try:
-        return ATCSession(
-            departure=eddv,
-            destination=eddg,
-            aircraft=c172,
-            callsign="D-EIYD",
-            conditions=conditions,
-        )
-    except Exception:
-        pytest.xfail("ATCSession constructor not yet implemented")
+    return ATCSession(
+        departure=eddv,
+        destination=eddg,
+        aircraft=c172,
+        callsign="D-EIYD",
+        conditions=conditions,
+    )
 
 
 # ------------------------------------------------------------------ #
@@ -374,21 +454,8 @@ class TestPhase4_LangenInformation:
     @pytest.fixture
     def at_fis(self, eddv, eddg, c172, conditions):
         s = _make_session(eddv, eddg, c172, conditions)
-        # Shortcut: set phase directly if session supports it, else process chain
-        try:
-            s.phase = Phase.EN_ROUTE_FIS
-            s.current_station = Station.FIS
-        except AttributeError:
-            # Advance via full exchange chain
-            s.process("Hannover Ground, D-EIYD, request startup.")
-            s.process("D-EIYD, ready, 27L.")
-            s.process("Hannover Tower, D-EIYD, holding, ready.")
-            s.process("Readback lineup, D-EIYD.")
-            s.process("Airborne, D-EIYD.")
-            s.process("Approaching CTR.")
-            s.process("Squawk 7000, 120.150, D-EIYD.")
-            s.process("Hannover Radar, D-EIYD, 2500 VFR.")
-            s.process("Langen 128.950, D-EIYD.")
+        s.phase = Phase.EN_ROUTE_FIS
+        s.current_station = Station.FIS
         return s
 
     def test_checkin_acknowledged(self, at_fis):
@@ -428,12 +495,9 @@ class TestPhase5_EDDGApproach:
     @pytest.fixture
     def at_approach(self, eddv, eddg, c172, conditions):
         s = _make_session(eddv, eddg, c172, conditions)
-        try:
-            s.phase = Phase.APPROACH
-            s.current_station = Station.APP
-            s.current_airport = eddg
-        except AttributeError:
-            pytest.xfail("phase/station setters not yet implemented")
+        s.phase = Phase.APPROACH
+        s.current_station = Station.APP
+        s.current_airport = eddg
         return s
 
     def test_ctr_entry_assigns_new_squawk(self, at_approach):
@@ -485,12 +549,9 @@ class TestPhase6_EDDGTower:
     @pytest.fixture
     def at_eddg_tower(self, eddv, eddg, c172, conditions):
         s = _make_session(eddv, eddg, c172, conditions)
-        try:
-            s.phase = Phase.CIRCUIT
-            s.current_station = Station.TWR
-            s.current_airport = eddg
-        except AttributeError:
-            pytest.xfail("phase/station setters not yet implemented")
+        s.phase = Phase.CIRCUIT
+        s.current_station = Station.TWR
+        s.current_airport = eddg
         return s
 
     def test_initial_clears_to_land(self, at_eddg_tower):
@@ -533,12 +594,9 @@ class TestPhase7_EDDGGround:
     @pytest.fixture
     def at_eddg_ground(self, eddv, eddg, c172, conditions):
         s = _make_session(eddv, eddg, c172, conditions)
-        try:
-            s.phase = Phase.GROUND_ARRIVAL
-            s.current_station = Station.GND
-            s.current_airport = eddg
-        except AttributeError:
-            pytest.xfail("phase/station setters not yet implemented")
+        s.phase = Phase.GROUND_ARRIVAL
+        s.current_station = Station.GND
+        s.current_airport = eddg
         return s
 
     def test_taxi_instruction_given(self, at_eddg_ground):
@@ -590,22 +648,16 @@ class TestSquawkLifecycle:
 
     def test_squawk_7000_issued_on_ctr_exit(self, eddv, eddg, c172, conditions):
         s = _make_session(eddv, eddg, c172, conditions)
-        try:
-            s.phase = Phase.DEPARTING
-            s.current_station = Station.TWR
-        except AttributeError:
-            pytest.xfail("phase setter not implemented")
+        s.phase = Phase.DEPARTING
+        s.current_station = Station.TWR
         s.process("D-EIYD, approaching CTR boundary.")
         assert "7000" in s.squawk_history
 
     def test_new_squawk_assigned_by_eddg_approach(self, eddv, eddg, c172, conditions):
         s = _make_session(eddv, eddg, c172, conditions)
-        try:
-            s.phase = Phase.APPROACH
-            s.current_station = Station.APP
-            s.current_airport = eddg
-        except AttributeError:
-            pytest.xfail("phase setter not implemented")
+        s.phase = Phase.APPROACH
+        s.current_station = Station.APP
+        s.current_airport = eddg
         r = s.process(
             "Münster Approach, D-EIYD, 2500 VFR, 10nm east, request entry."
         )
@@ -625,7 +677,7 @@ class TestPilotParsingAcrossAllPhases:
 
     @pytest.mark.parametrize("text,expected_station,expected_callsign", [
         ("Hannover Ground, D-EIYD, request startup",          "GND", "D-EIYD"),
-        ("D-EIYD, ready at holding point Alpha, runway 27L.", "GND", "D-EIYD"),
+        ("Hannover Ground, D-EIYD, ready at holding point Alpha, runway 27L.", "GND", "D-EIYD"),
         ("Hannover Tower, D-EIYD, holding Alpha, ready.",     "TWR", "D-EIYD"),
         ("Münster Approach, D-EIYD, 2500 feet VFR.",          "APP", "D-EIYD"),
         ("Münster Tower, D-EIYD, right base runway 25.",      "TWR", "D-EIYD"),

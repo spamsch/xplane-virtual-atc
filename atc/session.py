@@ -78,6 +78,8 @@ _CTR_EXIT_RE = re.compile(
     r'leaving\s+controlled\s+airspace|frequency\s+change\s+approved|squawk\s+7000',
     re.IGNORECASE,
 )
+_TAXI_RE = re.compile(r'\btaxi\s+(?:to|via)\b', re.IGNORECASE)
+_PARK_RE = re.compile(r'readback correct', re.IGNORECASE)
 
 
 def _parse_response(text: str) -> dict:
@@ -289,6 +291,11 @@ class ATCSession:
                 self.squawk_history.append('7000')
         elif trigger == 'land':
             self.phase = Phase.CIRCUIT
+
+        if _TAXI_RE.search(response_text) and self.phase == Phase.PRE_DEPARTURE:
+            self.phase = Phase.TAXIING
+        if _PARK_RE.search(response_text) and self.phase == Phase.GROUND_ARRIVAL:
+            self.phase = Phase.PARKED
 
         # --- Station transition from handoff frequency in response ---
         freq_change: Optional[float] = parsed.get('frequency_change')
