@@ -533,6 +533,8 @@ async def run():
     # Pre-load Whisper model so the first PTT press isn't delayed by a 3 GB download
     if _AUDIO_READY:
         await asyncio.to_thread(_audio_stt.preload)
+        if config.OPENAI_API_KEY:
+            await asyncio.to_thread(_audio_tts.check_openai)
 
     # Default: simulated with empty state until a scenario is loaded
     _driver = ScenarioSimulator()

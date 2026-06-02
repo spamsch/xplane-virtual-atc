@@ -58,17 +58,14 @@ _kokoro_instance = None   # lazy singleton
 
 # ─────────────────────────── OpenAI TTS backend ──────────────────────────────
 
-def _backend_openai(text: str, voice: str) -> tuple[np.ndarray, int]:
-    if not config.OPENAI_API_KEY:
-        raise RuntimeError("OPENAI_API_KEY is not set")
-
+def _openai_request(text: str, voice: str) -> bytes:
+    """Make a single OpenAI TTS API call; return raw WAV bytes."""
     payload = json.dumps({
         "model": config.OPENAI_TTS_MODEL,
         "input": text,
         "voice": voice,
         "response_format": "wav",
     }).encode()
-
     req = urllib.request.Request(
         "https://api.openai.com/v1/audio/speech",
         data=payload,
@@ -78,9 +75,36 @@ def _backend_openai(text: str, voice: str) -> tuple[np.ndarray, int]:
         },
     )
     with urllib.request.urlopen(req, timeout=30) as resp:
-        wav_bytes = resp.read()
+        return resp.read()
 
-    return decode_wav(wav_bytes)
+
+def check_openai() -> bool:
+    """
+    Verify the OpenAI TTS key and model are reachable.
+    Synthesises a single word; discards the audio.
+    Returns True on success, False on any error (logs the reason).
+    """
+    try:
+        log.info(
+            f"OpenAI TTS configured — model={config.OPENAI_TTS_MODEL!r} "
+            f"voice={config.TTS_VOICE!r}. Verifying key…"
+        )
+        _openai_request("check", config.TTS_VOICE)
+        log.info("OpenAI TTS key verified OK.")
+        return True
+    except urllib.error.HTTPError as e:
+        body = e.read().decode(errors="replace")
+        log.warning(f"OpenAI TTS key check failed ({e.code}): {body[:200]}")
+        return False
+    except Exception as e:
+        log.warning(f"OpenAI TTS key check failed: {e}")
+        return False
+
+
+def _backend_openai(text: str, voice: str) -> tuple[np.ndarray, int]:
+    if not config.OPENAI_API_KEY:
+        raise RuntimeError("OPENAI_API_KEY is not set")
+    return decode_wav(_openai_request(text, voice))
 
 
 # ─────────────────────────── Kokoro helpers ──────────────────────────────────
