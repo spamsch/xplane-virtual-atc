@@ -136,12 +136,12 @@ async def _send_current_state(ws: WebSocketServerProtocol):
         await _send_to(ws, "state_update", **_state_dict(_driver.state))
     if _current_airport:
         await _send_to(ws, "airport_detected", **_airport_dict(_current_airport))
-    if _history:
-        for entry in _history:
-            await _send_to(ws, "atc_message", role="pilot",
-                           text=entry["pilot"], model=None, timestamp=0)
-            await _send_to(ws, "atc_message", role="atc",
-                           text=entry["atc"], model=entry.get("model"), timestamp=0)
+    history = _session._history if _session else []
+    for entry in history:
+        await _send_to(ws, "atc_message", role="pilot",
+                       text=entry["pilot"], model=None, timestamp=0)
+        await _send_to(ws, "atc_message", role="atc",
+                       text=entry["atc"], model=entry.get("model"), timestamp=0)
 
 
 async def _client_handler(ws: WebSocketServerProtocol):
@@ -194,7 +194,7 @@ async def _process_transmission(text: str):
         r = await asyncio.to_thread(_session.process, text)
 
         await _broadcast("atc_message", role="atc", text=r.text,
-                         model=r.phase_after.value, timestamp=time.time())
+                         model=r.model, timestamp=time.time())
 
         # Broadcast state changes so the UI updates immediately
         await _broadcast("phase_change",
@@ -292,6 +292,23 @@ async def _set_airport(airport: Airport, scenario: Optional[Scenario] = None):
     else:
         session_conditions = {airport.icao: {}}
 
+    # Look up destination airport (if scenario specifies one)
+    destination: Optional[Airport] = None
+    if scenario and scenario.destination_airport and _airport_db:
+        destination = _airport_db.get(scenario.destination_airport)
+        if destination:
+            dcond = scenario.destination_conditions
+            session_conditions[destination.icao] = {
+                'qnh':            dcond.get('qnh', 1013),
+                'wind_dir':       dcond.get('wind_dir', 0),
+                'wind_kts':       dcond.get('wind_kts', 0),
+                'visibility_km':  dcond.get('visibility_km', 10),
+                'atis':           dcond.get('atis', '?'),
+                'active_runway':  dcond.get('active_runway', ''),
+            }
+        else:
+            log.warning(f"Destination {scenario.destination_airport} not found in airport DB")
+
     # Run Opus boundary check to determine active runway
     log.info(f"Running Opus boundary check for {airport.icao}...")
     flat_cond = {
@@ -323,7 +340,7 @@ async def _set_airport(airport: Airport, scenario: Optional[Scenario] = None):
     callsign = (_driver.state.tail_number if _driver else "UNKNOWN") or "D-UNKN"
     _session = ATCSession(
         departure=airport,
-        destination=None,
+        destination=destination,
         aircraft=_current_acft,
         callsign=callsign,
         conditions=session_conditions,

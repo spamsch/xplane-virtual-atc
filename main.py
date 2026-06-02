@@ -20,7 +20,7 @@ import aircraft.database as acdb
 from airport.parser import parse_apt_dat
 from airport.database import AirportDB
 from atc import engine as atc_engine
-from atc.parser import parse, format_station
+from atc.session import ATCSession
 from xplane.connector import XPlaneConnector, FlightState
 
 logging.basicConfig(
@@ -131,41 +131,49 @@ def main():
         print(f"On runway: {rwy.name1}/{rwy.name2}")
     print()
 
-    # --- Boundary check: Opus sets operational context ---
-    conditions: dict = {
-        'wind': 'not available — check ATIS',
-        'qnh': 'not available',
-        'vis': 'not available',
-        'time': 'check simulator clock',
-    }
-
+    # --- Boundary check: Opus determines active runway ---
     print("[Querying Opus for ATC context setup…]")
+    active_runway = 'unknown'
+    notes = ''
     try:
         ctx = atc_engine.boundary_check(
             airport=airport,
             acft=acft,
             callsign=callsign,
-            conditions=conditions,
+            conditions={'wind': '?', 'qnh': '?', 'vis': '?', 'time': 'check simulator clock'},
             model=config.MODEL_BOUNDARY,
         )
         active_runway = ctx.get('active_runway', 'unknown')
-        atc_callsign = ctx.get('atc_callsign', f'{airport.name.split()[0]} Ground')
         notes = ctx.get('notes', '')
-        conditions['active_runway'] = active_runway
         print(f"Active runway : {active_runway}")
-        print(f"ATC callsign  : {atc_callsign}")
         if notes:
             print(f"Notes         : {notes}")
     except Exception as e:
         print(f"[Boundary check failed: {e}]")
-        atc_callsign = f'{airport.name.split()[0]} Ground'
-        active_runway = 'unknown'
-        conditions['active_runway'] = active_runway
+
+    # --- Create session ---
+    session_conditions = {
+        airport.icao: {
+            'qnh': '??',
+            'wind_dir': 0,
+            'wind_kts': 0,
+            'visibility_km': 10,
+            'atis': '?',
+            'active_runway': active_runway,
+        }
+    }
+    session = ATCSession(
+        departure=airport,
+        destination=None,
+        aircraft=acft,
+        callsign=callsign,
+        conditions=session_conditions,
+    )
 
     # --- Interactive loop ---
     print()
     print("=" * 60)
-    print(f"  {atc_callsign} is online")
+    print(f"  {session._atc_callsign()} is online")
     print(f"  Callsign in sim: {callsign}  ({icao_type})")
     print(f"  Active runway  : {active_runway}")
     gnd = airport.ground_freq()
@@ -178,8 +186,8 @@ def main():
     print("=" * 60)
     print()
 
-    history: list = []
-    call_count = 0
+    prev_phase = session.phase
+    prev_station = session.current_station
 
     while True:
         try:
@@ -191,33 +199,18 @@ def main():
         if not raw:
             continue
 
-        call = parse(raw)
-
-        if call.callsign is None:
-            print("[No callsign detected in that transmission. "
-                  "Try: 'Hannover Ground D-EIYD <message>']\n")
-            continue
-
-        # First call of session uses Opus (boundary); subsequent uses Sonnet
-        use_opus = call_count == 0
-        model = config.MODEL_BOUNDARY if use_opus else config.MODEL_ROUTINE
-        if use_opus:
-            print("[First transmission — using Opus for response…]")
-
         try:
-            response = atc_engine.respond(
-                pilot_message=raw,
-                airport=airport,
-                acft=acft,
-                callsign=call.callsign,
-                conditions=conditions,
-                atc_callsign=atc_callsign,
-                history=history,
-                model=model,
-            )
-            print(f"\nATC: {response}\n")
-            history.append({'pilot': raw, 'atc': response})
-            call_count += 1
+            r = session.process(raw)
+            print(f"\nATC: {r.text}\n")
+            if r.squawk:
+                print(f"[Squawk: {r.squawk}]")
+            if r.frequency_change:
+                print(f"[→ {r.frequency_change:.3f} MHz]")
+            if r.phase_after != prev_phase or r.station_after != prev_station:
+                print(f"[{r.station_after.value.upper()} / {r.phase_after.value}]")
+                prev_phase = r.phase_after
+                prev_station = r.station_after
+            print()
         except subprocess.TimeoutExpired:
             print("[LLM timeout — try again]\n")
         except Exception as e:

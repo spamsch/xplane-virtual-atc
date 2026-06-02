@@ -40,12 +40,18 @@ class Scenario:
     aircraft_icao: str
     callsign: str
     departure_airport: str
-    conditions: dict          # qnh, wind_dir, wind_kts, visibility_km, atis
+    conditions: dict               # departure wx: qnh, wind_dir, wind_kts, visibility_km, atis
     lat: float
     lon: float
     alt_ft: float
     heading: float
     on_ground: bool
+    destination_airport: Optional[str] = None
+    destination_conditions: dict = None    # type: ignore[assignment]
+
+    def __post_init__(self):
+        if self.destination_conditions is None:
+            self.destination_conditions = {}
 
     @classmethod
     def from_dict(cls, data: dict) -> "Scenario":
@@ -63,6 +69,8 @@ class Scenario:
             alt_ft=pos.get("alt_ft", 0.0),
             heading=pos.get("heading", 270.0),
             on_ground=pos.get("on_ground", True),
+            destination_airport=data.get("destination_airport"),
+            destination_conditions=data.get("destination_conditions", {}),
         )
 
     @classmethod
@@ -71,7 +79,7 @@ class Scenario:
             return cls.from_dict(json.load(f))
 
     def to_dict(self) -> dict:
-        return {
+        d = {
             "name": self.name,
             "description": self.description,
             "aircraft": {"icao": self.aircraft_icao, "callsign": self.callsign},
@@ -82,6 +90,11 @@ class Scenario:
                 "heading": self.heading, "on_ground": self.on_ground,
             },
         }
+        if self.destination_airport:
+            d["destination_airport"] = self.destination_airport
+        if self.destination_conditions:
+            d["destination_conditions"] = self.destination_conditions
+        return d
 
 
 class ScenarioSimulator:

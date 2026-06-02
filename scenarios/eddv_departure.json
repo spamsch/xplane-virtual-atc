@@ -1,6 +1,6 @@
 {
   "name": "EDDV Standard Departure",
-  "description": "C172 D-EIYD on the GA apron at Hannover. Wind 270/8, QNH 1018, ATIS Charlie. Expect runway 27L.",
+  "description": "C172 D-EIYD on the GA apron at Hannover. Wind 270/8, QNH 1018, ATIS Charlie. Expect runway 27L. Destination Münster/Osnabrück (EDDG).",
   "aircraft": {
     "icao": "C172",
     "callsign": "D-EIYD"
@@ -12,6 +12,15 @@
     "wind_kts": 8,
     "visibility_km": 10,
     "atis": "Charlie"
+  },
+  "destination_airport": "EDDG",
+  "destination_conditions": {
+    "qnh": 1018,
+    "wind_dir": 250,
+    "wind_kts": 6,
+    "visibility_km": 15,
+    "atis": "Delta",
+    "active_runway": "25"
   },
   "position": {
     "lat": 52.4608,

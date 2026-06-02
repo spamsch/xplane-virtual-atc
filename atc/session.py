@@ -62,6 +62,7 @@ class ATCResponse:
     frequency_change: Optional[float] = None
     runway: Optional[str] = None
     qnh: Optional[int] = None
+    model: Optional[str] = None             # model used to generate this response
 
 
 # ------------------------------------------------------------------ #
@@ -320,6 +321,7 @@ class ATCSession:
             frequency_change=freq_change,
             runway=parsed.get('runway'),
             qnh=parsed.get('qnh'),
+            model=model,
         )
 
     # -------------------------------------------------------------- #
