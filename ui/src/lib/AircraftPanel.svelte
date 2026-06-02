@@ -1,5 +1,31 @@
 <script>
-  import { flightState, com1Mhz, com2Mhz, airport } from './store.js';
+  import { flightState, com1Mhz, com2Mhz, airport, qnhHpa, windDir, windKts } from './store.js';
+  import { sendMessage } from './ws.js';
+
+  let editingCallsign = false;
+  let callsignDraft = '';
+
+  function focusInput(node) {
+    node.focus();
+  }
+
+  function startEdit() {
+    callsignDraft = $flightState?.tail_number || '';
+    editingCallsign = true;
+  }
+
+  function commitEdit() {
+    editingCallsign = false;
+    const v = callsignDraft.trim().toUpperCase();
+    if (v && v !== $flightState?.tail_number) {
+      sendMessage('set_callsign', { callsign: v });
+    }
+  }
+
+  function onKeydown(e) {
+    if (e.key === 'Enter')  { e.target.blur(); }
+    if (e.key === 'Escape') { editingCallsign = false; }
+  }
 
   function fmt(v, dec = 0) {
     if (v === null || v === undefined) return '---';
@@ -32,7 +58,21 @@
   <!-- Aircraft identity -->
   <section class="identity">
     <div class="icao">{s?.acf_icao || '----'}</div>
-    <div class="callsign">{s?.tail_number || '------'}</div>
+    {#if editingCallsign}
+      <input
+        class="callsign-input"
+        bind:value={callsignDraft}
+        onblur={commitEdit}
+        onkeydown={onKeydown}
+        maxlength="10"
+        spellcheck="false"
+        use:focusInput
+      />
+    {:else}
+      <button class="callsign" onclick={startEdit} title="Click to edit callsign">
+        {s?.tail_number || '------'}
+      </button>
+    {/if}
   </section>
 
   <div class="divider"></div>
@@ -79,6 +119,22 @@
   </section>
 
   <div class="divider"></div>
+
+  <!-- Weather -->
+  {#if $qnhHpa > 0}
+    <section class="data-grid">
+      <div class="section-label">WEATHER</div>
+      <div class="row">
+        <span class="key">QNH</span>
+        <span class="val">{$qnhHpa} hPa</span>
+      </div>
+      <div class="row">
+        <span class="key">WIND</span>
+        <span class="val">{String($windDir).padStart(3,'0')}° / {$windKts} kt</span>
+      </div>
+    </section>
+    <div class="divider"></div>
+  {/if}
 
   <!-- Radios -->
   <section class="data-grid">
@@ -130,6 +186,23 @@
     color: var(--accent-blue);
     font-weight: 600;
     letter-spacing: 0.04em;
+    cursor: pointer;
+    background: none;
+    width: 100%;
+    text-align: center;
+  }
+  .callsign:hover { opacity: 0.75; }
+
+  .callsign-input {
+    font-size: 18px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    color: var(--accent-blue);
+    text-align: center;
+    text-transform: uppercase;
+    width: 100%;
+    padding: 1px 4px;
+    border-radius: var(--radius);
   }
 
   .divider {

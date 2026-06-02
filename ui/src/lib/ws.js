@@ -7,8 +7,9 @@ import {
   wsStatus, backendUptime, source, scenarioName,
   flightState, airport, activeRunway, atcCallsign, boundaryNotes,
   messages, phase, station, thinking,
-  pttActive, transcription,
+  pttActive, transcription, audioEnabled,
 } from './store.js';
+import { playMicClick } from './sound.js';
 
 // ── Audio state (kept here so PTT logic is co-located with WS send) ───────
 let _mediaRecorder = null;
@@ -30,6 +31,8 @@ export async function requestMicPermission() {
 export async function startPTT() {
   if (_mediaRecorder?.state === 'recording') return;
 
+  playMicClick('key');   // relay clack the instant the mic is keyed
+
   if (!_micStream) {
     _micStream = await navigator.mediaDevices.getUserMedia({ audio: true }).catch(() => null);
     if (!_micStream) return;
@@ -49,6 +52,8 @@ export async function startPTT() {
 export async function stopPTT() {
   if (!_mediaRecorder || _mediaRecorder.state !== 'recording') return;
   if (_pttTimer) { clearTimeout(_pttTimer); _pttTimer = null; }
+
+  playMicClick('unkey');   // squelch-tail hiss when the mic is unkeyed
 
   await new Promise(resolve => {
     _mediaRecorder.onstop = resolve;
@@ -202,6 +207,19 @@ function dispatch(msg) {
       stopPTT();
       break;
 
+    case 'flight_reset':
+      stopPTT();
+      messages.set([]);
+      transcription.set('');
+      pttActive.set(false);
+      phase.set('pre_departure');
+      station.set('ground');
+      atcCallsign.set('Ground');
+      activeRunway.set(null);
+      boundaryNotes.set('');
+      airport.set(null);
+      break;
+
     case 'error':
       console.error('[backend]', msg.message);
       messages.update(list => [...list, {
@@ -230,6 +248,10 @@ export function loadScenario(scenarioObj) {
 
 export function setSource(src) {
   sendMessage('set_source', { source: src });
+}
+
+export function newFlight() {
+  sendMessage('new_flight');
 }
 
 function connect() {

@@ -1,7 +1,7 @@
 <script>
   import { tick } from 'svelte';
   import { messages, thinking, atcCallsign, station, pttActive, transcription, audioEnabled } from './store.js';
-  import { sendTransmission, startPTT, stopPTT, requestMicPermission } from './ws.js';
+  import { sendTransmission, startPTT, stopPTT, requestMicPermission, newFlight } from './ws.js';
 
   let input = $state('');
   let chatEl;
@@ -64,6 +64,7 @@
     <span class="station-dot"></span>
     <span class="station-name">{$atcCallsign}</span>
     <span class="station-code">{stationFreq[$station] ?? $station}</span>
+    <button class="new-flight-btn" onclick={newFlight} title="New flight — clears chat and resets session">↺</button>
   </div>
 
   <!-- Message history -->
@@ -192,6 +193,18 @@
     border-radius: var(--radius);
     padding: 1px 6px;
   }
+
+  .new-flight-btn {
+    font-size: 14px;
+    padding: 2px 6px;
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text-dim);
+    transition: color 0.15s, border-color 0.15s;
+    line-height: 1;
+  }
+  .new-flight-btn:hover { color: var(--accent-amber); border-color: var(--accent-amber); }
 
   .chat {
     flex: 1;

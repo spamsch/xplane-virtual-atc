@@ -441,12 +441,15 @@ class TestExtraInstructions:
         extra = call_kwargs.get("extra_instructions", "") or ""
         assert "7000" in extra or "CTR" in extra
 
-    def test_no_extra_instructions_on_ground_call(self, eddv, eddg, c172, conditions):
+    def test_taxi_layout_injected_on_ground_call(self, eddv, eddg, c172, conditions):
         s = make_session(eddv, eddg, c172, conditions)
         with patch("atc.session.atc_engine.respond", return_value="Startup approved.") as mock:
             s.process("Hannover Ground, D-EIYD, request startup.")
-        extra = mock.call_args.kwargs.get("extra_instructions")
-        assert extra is None
+        extra = mock.call_args.kwargs.get("extra_instructions") or ""
+        # Ground calls always receive airport layout context so the LLM can
+        # issue real taxiway designators in the eventual taxi clearance.
+        assert "EDDV" in extra
+        assert "27L" in extra   # active_runway from conditions fixture
 
 
 # ------------------------------------------------------------------ #

@@ -23,16 +23,27 @@ log = logging.getLogger(__name__)
 
 
 def _claude(prompt: str, model: str, timeout: int = 90) -> str:
-    proc = subprocess.run(
-        ['claude', '-p', '--model', model],
-        input=prompt,
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-    )
+    import time as _time
+    log.info(f"claude -p --model {model}  ({len(prompt)} chars, timeout {timeout}s)")
+    t0 = _time.monotonic()
+    try:
+        proc = subprocess.run(
+            ['claude', '-p', '--model', model],
+            input=prompt,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        elapsed = _time.monotonic() - t0
+        raise RuntimeError(f"claude timed out after {elapsed:.0f}s (model {model})")
+    elapsed = _time.monotonic() - t0
     if proc.returncode != 0:
         stderr = proc.stderr[:300].strip()
+        log.warning(f"claude exited {proc.returncode} after {elapsed:.1f}s: {stderr}")
         raise RuntimeError(f"claude exited {proc.returncode}: {stderr}")
+    out_chars = len(proc.stdout.strip())
+    log.info(f"claude replied in {elapsed:.1f}s ({out_chars} chars)")
     return proc.stdout.strip()
 
 

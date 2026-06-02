@@ -1,5 +1,6 @@
 <script>
   import { airport, activeRunway, com1Mhz, com2Mhz, scenarioDrawerOpen } from './store.js';
+  import { sendMessage } from './ws.js';
 
   const freqTypeOrder = [53, 54, 50, 52, 55, 56, 51];  // GND, TWR, ATIS, CLD, APP, DEP, CTAF
   const freqTypeShort = {
@@ -14,14 +15,18 @@
     return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
   }) : [];
 
-  function isTuned(freqMhz) {
-    return (Math.abs(freqMhz - $com1Mhz) < 0.005) ||
-           (Math.abs(freqMhz - $com2Mhz) < 0.005);
-  }
+  function isCom1(freqMhz) { return Math.abs(freqMhz - $com1Mhz) < 0.005; }
+  function isCom2(freqMhz) { return Math.abs(freqMhz - $com2Mhz) < 0.005; }
 
   function isActive(rwy) {
     if (!$activeRunway) return false;
     return rwy.name1 === $activeRunway || rwy.name2 === $activeRunway;
+  }
+
+  function tuneCom1(freqMhz) { sendMessage('tune_com1', { freq_mhz: freqMhz }); }
+  function tuneCom2(e, freqMhz) {
+    e.preventDefault();
+    sendMessage('tune_com2', { freq_mhz: freqMhz });
   }
 </script>
 
@@ -52,16 +57,40 @@
 
     <!-- Frequencies -->
     <section class="freq-section">
-      <div class="section-label">FREQUENCIES</div>
+      <div class="section-label-row">
+        <span class="section-label">FREQUENCIES</span>
+        <span class="freq-hint">L·COM1 R·COM2</span>
+      </div>
       {#each sortedFreqs as f}
-        <div class="freq-row" class:tuned={isTuned(f.freq_mhz)}>
+        <div class="freq-row">
           <span class="freq-type">{freqTypeShort[f.type_code] ?? f.type_name}</span>
-          <span class="freq-mhz" class:tuned={isTuned(f.freq_mhz)}>
-            {#if isTuned(f.freq_mhz)}<span class="dot-tuned">●</span>{/if}
+          <button
+            class="freq-mhz"
+            class:com1={isCom1(f.freq_mhz)}
+            class:com2={isCom2(f.freq_mhz)}
+            onclick={() => tuneCom1(f.freq_mhz)}
+            oncontextmenu={(e) => tuneCom2(e, f.freq_mhz)}
+            title="Left-click: COM1 · Right-click: COM2"
+          >
             {f.freq_mhz.toFixed(3)}
-          </span>
+          </button>
         </div>
       {/each}
+      {#if !sortedFreqs.some(f => Math.abs(f.freq_mhz - 122.800) < 0.005)}
+        <div class="freq-row unicom-row">
+          <span class="freq-type unicom-label">UNICOM</span>
+          <button
+            class="freq-mhz"
+            class:com1={isCom1(122.800)}
+            class:com2={isCom2(122.800)}
+            onclick={() => tuneCom1(122.800)}
+            oncontextmenu={(e) => tuneCom2(e, 122.800)}
+            title="Left-click: COM1 · Right-click: COM2"
+          >
+            122.800
+          </button>
+        </div>
+      {/if}
     </section>
 
   {:else}
@@ -117,6 +146,19 @@
 
   .freq-section { display: flex; flex-direction: column; gap: 4px; }
 
+  .section-label-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    padding-bottom: 6px;
+  }
+  .section-label-row .section-label { padding-bottom: 0; }
+  .freq-hint {
+    font-size: 9px;
+    color: var(--text-dim);
+    letter-spacing: 0.04em;
+  }
+
   .freq-row {
     display: flex;
     justify-content: space-between;
@@ -132,11 +174,20 @@
 
   .freq-mhz {
     color: var(--text-muted);
-    font-size: 13px;
+    font-size: 15px;
     display: flex; align-items: center; gap: 4px;
+    background: none;
+    padding: 2px 4px;
+    border-radius: var(--radius);
+    transition: background 0.1s, color 0.1s;
+    cursor: pointer;
   }
-  .freq-mhz.tuned { color: var(--accent-green); font-weight: 600; }
-  .dot-tuned { font-size: 9px; }
+  .freq-mhz:hover  { background: var(--bg-panel-alt); color: var(--text); }
+  .freq-mhz.com1 { color: var(--accent-green); font-weight: 600; }
+  .freq-mhz.com2 { color: var(--accent-amber); font-weight: 600; }
+
+  .unicom-row { margin-top: 6px; border-top: 1px solid var(--border); padding-top: 6px; }
+  .unicom-label { color: var(--text-dim); }
 
   .no-airport {
     flex: 1;

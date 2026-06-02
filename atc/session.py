@@ -237,6 +237,15 @@ class ATCSession:
                 "contact the next frequency (use the departure/radar frequency from "
                 "the airport's frequency list)."
             )
+        if self.current_station == Station.GND:
+            active_rwy = self._flat_conditions().get('active_runway', 'unknown')
+            stand      = self._flat_conditions().get('stand', '')
+            stand_note = f" Aircraft is at stand/gate {stand}." if stand else ""
+            extra_parts.append(
+                f"Use {self.current_airport.icao}'s real taxiway designators, "
+                f"holding-point names, and apron layout in any taxi clearance.{stand_note} "
+                f"Active runway: {active_rwy}."
+            )
 
         # Model: Opus for first call on each new station, Sonnet thereafter
         first_call_on_station = self.current_station not in self._stations_seen

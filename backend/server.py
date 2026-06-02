@@ -50,6 +50,8 @@ from atc import engine as atc_engine
 from atc.parser import parse as parse_radio_call
 from atc.session import ATCSession
 from xplane.connector import FlightState
+from xplane.rest_connector import XPlaneRestConnector, encode_fixed_string
+from xplane.ptt_listener import PTTListener
 from xplane.simulator import ScenarioSimulator, Scenario
 
 log = logging.getLogger(__name__)
@@ -78,10 +80,12 @@ _session: Optional[ATCSession] = None
 _thinking_count: int = 0         # in-flight transmissions; UI sees thinking=True when > 0
 _source: str = "simulated"
 _start_time: float = 0.0
-_prev_ptt: bool = False          # X-Plane PTT edge-detection
+_prev_ptt: bool = False          # last broadcast PTT state (de-dupe spurious ends)
+_ptt_listener: Optional[PTTListener] = None   # WebSocket PTT edge listener
 _tx_lock: Optional[asyncio.Lock] = None   # serialise concurrent LLM calls
 
 MAX_AUDIO_BYTES = 2 * 1024 * 1024   # 2 MB ≈ 62 s at 16 kHz 16-bit mono
+ACF_TAILNUM_BYTES = 40              # sim/aircraft/view/acf_tailnum is char[40]
 
 
 async def _thinking_enter():
@@ -115,6 +119,9 @@ def _state_dict(s: FlightState) -> dict:
         "transponder": int(s.transponder) if s.transponder else 1200,
         "acf_icao": s.acf_icao,
         "tail_number": s.tail_number,
+        "qnh_hpa": s.qnh_hpa,
+        "wind_dir": int(s.wind_dir_deg),
+        "wind_kts": int(s.wind_speed_kts),
     }
 
 
@@ -215,6 +222,14 @@ async def _handle_client_message(msg: dict):
         await _load_scenario(msg["scenario"])
     elif t == "set_source":
         await _set_source(msg["source"])
+    elif t == "set_callsign":
+        await _set_callsign(msg.get("callsign", ""))
+    elif t == "tune_com1":
+        await _tune_com1(float(msg["freq_mhz"]))
+    elif t == "tune_com2":
+        await _tune_com2(float(msg["freq_mhz"]))
+    elif t == "new_flight":
+        await _new_flight()
 
 
 async def _process_transmission(text: str):
@@ -322,6 +337,9 @@ async def _load_scenario(data: dict):
     _current_airport = None
     _session = None
 
+    # Leaving the live X-Plane source — tear down its PTT listener.
+    await _stop_ptt_listener()
+
     sim = ScenarioSimulator(scenario)
     _driver = sim
     _source = "simulated"
@@ -343,31 +361,120 @@ async def _load_scenario(data: dict):
     log.info(f"Loaded scenario: {scenario.name}")
 
 
+async def _new_flight():
+    global _session, _current_airport, _current_acft, _prev_ptt
+    log.info("New flight — resetting ATC session")
+    _session = None
+    _current_airport = None
+    _current_acft = None
+    if _prev_ptt:
+        await _broadcast("ptt_end")
+    _prev_ptt = False
+    await _broadcast("flight_reset")
+
+
+async def _set_callsign(callsign: str):
+    global _session
+    callsign = callsign.strip().upper()
+    if not callsign:
+        return
+    log.info(f"Setting callsign → {callsign}")
+    if _session:
+        _session.callsign = callsign
+    if _source == "xplane" and isinstance(_driver, XPlaneRestConnector):
+        # acf_tailnum is a fixed 40-byte char array; the write must clear the
+        # whole array or the previous tail's trailing chars bleed through.
+        b64 = encode_fixed_string(callsign, ACF_TAILNUM_BYTES)
+        ok = await asyncio.to_thread(
+            _driver.write_dataref, 'sim/aircraft/view/acf_tailnum', b64
+        )
+        if not ok:
+            await _broadcast("error", message=f"Could not write callsign to X-Plane")
+    # Broadcast optimistic state update so the UI reflects the change immediately
+    if _driver:
+        state = _driver.state
+        if state.is_flight_loaded:
+            d = _state_dict(state)
+            d['tail_number'] = callsign
+            await _broadcast("state_update", **d)
+
+
+async def _tune_com1(freq_mhz: float):
+    raw = int(round(freq_mhz * 100))
+    log.info(f"Tuning COM1 → {freq_mhz:.3f} MHz")
+    if _source == "xplane" and isinstance(_driver, XPlaneRestConnector):
+        ok = await asyncio.to_thread(
+            _driver.write_dataref, 'sim/cockpit/radios/com1_freq_hz', raw
+        )
+        if not ok:
+            await _broadcast("error", message="Could not tune COM1 in X-Plane")
+
+
+async def _tune_com2(freq_mhz: float):
+    raw = int(round(freq_mhz * 100))
+    log.info(f"Tuning COM2 → {freq_mhz:.3f} MHz")
+    if _source == "xplane" and isinstance(_driver, XPlaneRestConnector):
+        ok = await asyncio.to_thread(
+            _driver.write_dataref, 'sim/cockpit/radios/com2_freq_hz', raw
+        )
+        if not ok:
+            await _broadcast("error", message="Could not tune COM2 in X-Plane")
+
+
+async def _on_ptt_change(pressed: bool):
+    """Edge callback from the WebSocket PTT listener — broadcast immediately."""
+    global _prev_ptt
+    if pressed == _prev_ptt:
+        return
+    _prev_ptt = pressed
+    if pressed:
+        log.info("PTT pressed — recording started")
+        await _broadcast("ptt_start")
+    else:
+        log.info("PTT released — recording stopped")
+        await _broadcast("ptt_end")
+
+
+async def _stop_ptt_listener():
+    global _ptt_listener
+    if _ptt_listener is not None:
+        await _ptt_listener.stop()
+        _ptt_listener = None
+
+
 async def _set_source(source: str):
-    global _source, _prev_ptt
-    # Reset PTT edge-detection state so we don't emit a spurious ptt_end
-    # if the previous source had PTT active at the moment of the switch.
+    global _source, _prev_ptt, _ptt_listener
+    # Reset PTT state so we don't emit a spurious ptt_end if the previous
+    # source had PTT active at the moment of the switch.
+    await _stop_ptt_listener()
     if _prev_ptt:
         await _broadcast("ptt_end")
     _prev_ptt = False
 
     if source == "xplane":
-        # XPlane mode: start the real connector
-        from xplane.connector import XPlaneConnector
-        connector = XPlaneConnector(
-            xplane_host=config.XPLANE_IP,
-            xplane_port=config.XPLANE_UDP_PORT,
-            local_port=config.LOCAL_RECV_PORT,
-            ptt_dataref=config.XPLANE_PTT_DATAREF,
+        connector = XPlaneRestConnector(
+            host=config.XPLANE_IP,
+            port=config.XPLANE_REST_PORT,
         )
-        try:
-            connector.start()
-            global _driver
-            _driver = connector
-            _source = "xplane"
-            await _broadcast("source_change", source="xplane", scenario_name=None)
-        except OSError as e:
-            await _broadcast("error", message=f"Cannot connect to X-Plane: {e}")
+        connector.start()
+        global _driver
+        _driver = connector
+        _source = "xplane"
+
+        # Low-latency PTT over the X-Plane WebSocket (auto-detects whether the
+        # configured name is a command like sim/operation/contact_atc_ptt or a
+        # readable dataref like xpilot/ptt). Replaces 2 Hz polled detection.
+        if config.XPLANE_PTT_DATAREF:
+            _ptt_listener = PTTListener(
+                host=config.XPLANE_IP,
+                port=config.XPLANE_REST_PORT,
+                ptt_source=config.XPLANE_PTT_DATAREF,
+                on_change=_on_ptt_change,
+            )
+            _ptt_listener.start()
+
+        await _broadcast("source_change", source="xplane", scenario_name=None)
+        log.info(f"Switched to X-Plane REST source ({config.XPLANE_IP}:{config.XPLANE_REST_PORT})")
     else:
         await _broadcast("error", message="Switch to simulated via load_scenario")
 
@@ -392,7 +499,21 @@ async def _set_airport(airport: Airport, scenario: Optional[Scenario] = None):
             }
         }
     else:
-        session_conditions = {airport.icao: {}}
+        # Live X-Plane mode — seed conditions from current flight state
+        wx = _driver.state if _driver else None
+        session_conditions = {
+            airport.icao: {
+                'qnh':           wx.qnh_hpa  if wx and wx.qnh_hpa  > 0 else 1013,
+                'wind_dir':      int(wx.wind_dir_deg)   if wx else 0,
+                'wind_kts':      int(wx.wind_speed_kts) if wx else 0,
+                'visibility_km': 10,
+            }
+        }
+        if wx and wx.qnh_hpa > 0:
+            log.info(
+                f"Live weather: QNH {wx.qnh_hpa} hPa, "
+                f"wind {int(wx.wind_dir_deg)}°/{int(wx.wind_speed_kts)} kt"
+            )
 
     # Look up destination airport (if scenario specifies one)
     destination: Optional[Airport] = None
@@ -412,13 +533,17 @@ async def _set_airport(airport: Airport, scenario: Optional[Scenario] = None):
             log.warning(f"Destination {scenario.destination_airport} not found in airport DB")
 
     # Run Opus boundary check to determine active runway
-    log.info(f"Running Opus boundary check for {airport.icao}...")
     flat_cond = {
         'wind': f"{session_conditions[airport.icao].get('wind_dir', '?')}° / {session_conditions[airport.icao].get('wind_kts', '?')} kt",
         'qnh':  str(session_conditions[airport.icao].get('qnh', '??')),
         'vis':  f"{session_conditions[airport.icao].get('visibility_km', '?')} km",
         'time': 'check simulator clock',
     }
+    log.info(
+        f"Boundary check for {airport.icao} "
+        f"({airport.name}, {len(airport.runways)} rwys) — "
+        f"wind {flat_cond['wind']}, QNH {flat_cond['qnh']}"
+    )
     try:
         ctx = await asyncio.to_thread(
             atc_engine.boundary_check,
@@ -429,7 +554,13 @@ async def _set_airport(airport: Airport, scenario: Optional[Scenario] = None):
             model=config.MODEL_BOUNDARY,
         )
         active_runway = ctx.get("active_runway", "unknown")
-        notes = ctx.get("notes", "")
+        atc_callsign  = ctx.get("atc_callsign", "")
+        notes         = ctx.get("notes", "")
+        log.info(
+            f"Boundary check done: runway {active_runway}, "
+            f"callsign '{atc_callsign}'"
+            + (f", notes: {notes}" if notes else "")
+        )
     except Exception as e:
         log.warning(f"Boundary check failed: {e}")
         active_runway = "unknown"
@@ -459,8 +590,50 @@ async def _set_airport(airport: Airport, scenario: Optional[Scenario] = None):
 # ------------------------------------------------------------------ #
 # Background loops
 
+async def _xplane_probe_loop():
+    """
+    Probes the X-Plane REST API every 2 s and auto-activates the xplane source
+    when X-Plane is detected. Only runs while source is 'simulated'.
+    """
+    import json as _json
+    from urllib.request import Request as _Req, urlopen as _urlopen
+
+    def _probe() -> str | None:
+        """Return X-Plane version string on success, None on failure."""
+        base = f'http://{config.XPLANE_IP}:{config.XPLANE_REST_PORT}'
+        # /api/capabilities was added in 12.1.4; fall back to datarefs/count for 12.1.1+
+        try:
+            req = _Req(f'{base}/api/capabilities', headers={'Accept': 'application/json'})
+            with _urlopen(req, timeout=1.5) as resp:
+                data = _json.loads(resp.read())
+                if 'x-plane' in data:
+                    return data['x-plane'].get('version', 'unknown')
+        except Exception:
+            pass
+        try:
+            req = _Req(f'{base}/api/v1/datarefs/count', headers={'Accept': 'application/json'})
+            with _urlopen(req, timeout=1.5) as resp:
+                data = _json.loads(resp.read())
+                if 'data' in data:
+                    return 'unknown (v1 only)'
+        except Exception:
+            pass
+        return None
+
+    log.info(
+        f"Probing for X-Plane at "
+        f"http://{config.XPLANE_IP}:{config.XPLANE_REST_PORT} every 2 s ..."
+    )
+    while True:
+        if _source != "xplane":
+            version = await asyncio.to_thread(_probe)
+            if version is not None:
+                log.info(f"X-Plane detected (version {version}) — activating live source")
+                await _set_source("xplane")
+        await asyncio.sleep(2.0)
+
+
 async def _state_poll_loop():
-    global _prev_ptt
     last_airport_check = 0.0
 
     while True:
@@ -476,16 +649,15 @@ async def _state_poll_loop():
                         last_airport_check = now
                         airport = _airport_db.nearest(state.lat, state.lon)
                         if airport and airport.icao != (_current_airport.icao if _current_airport else ""):
+                            log.info(
+                                f"Airport detected: {airport.icao} ({airport.name}) "
+                                f"from position {state.lat:.4f},{state.lon:.4f}"
+                            )
                             await _set_airport(airport)
 
-                    # X-Plane PTT edge detection (only when dataref is configured)
-                    if _source == "xplane" and config.XPLANE_PTT_DATAREF:
-                        ptt = state.ptt_active
-                        if ptt and not _prev_ptt:
-                            await _broadcast("ptt_start")
-                        elif not ptt and _prev_ptt:
-                            await _broadcast("ptt_end")
-                        _prev_ptt = ptt
+                    # PTT is handled out-of-band by the WebSocket PTTListener
+                    # (see _on_ptt_change), not polled here — polling at 2 Hz
+                    # clipped transmissions and missed quick taps.
 
             except Exception as e:
                 log.debug(f"State poll error: {e}")
@@ -536,24 +708,16 @@ async def run():
         if config.OPENAI_API_KEY:
             await asyncio.to_thread(_audio_tts.check_openai)   # TTS: verify key
 
-    # Default: simulated with empty state until a scenario is loaded
+    # Start idle — the probe loop will auto-detect X-Plane within 2 s.
+    # Scenarios can still be loaded manually via the UI's scenario drawer.
     _driver = ScenarioSimulator()
-
-    # Auto-load the default scenario if present
-    default = Path(__file__).parent.parent / "scenarios" / "eddv_departure.json"
-    if default.exists():
-        try:
-            scenario = Scenario.from_file(default)
-            await _load_scenario(scenario.to_dict())
-            log.info(f"Auto-loaded default scenario: {scenario.name}")
-        except Exception as e:
-            log.warning(f"Could not auto-load default scenario: {e}")
 
     log.info("Backend listening on ws://localhost:8765")
     async with websockets.serve(_client_handler, "localhost", 8765):
         await asyncio.gather(
             _state_poll_loop(),
             _heartbeat_loop(),
+            _xplane_probe_loop(),
         )
 
 

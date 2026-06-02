@@ -14,6 +14,8 @@ if _env_file.exists():
 XPLANE_IP = os.environ.get("XPLANE_IP", "127.0.0.1")
 XPLANE_UDP_PORT = int(os.environ.get("XPLANE_PORT", "49000"))
 LOCAL_RECV_PORT = int(os.environ.get("LOCAL_PORT", "49001"))
+# REST API (X-Plane 12.1.0+) — enable in Network & Sound → "Enable local network access"
+XPLANE_REST_PORT = int(os.environ.get("XPLANE_REST_PORT", "8086"))
 
 _STEAM_BASE = Path.home() / "Library/Application Support/Steam/steamapps/common/X-Plane 12"
 XPLANE_BASE = Path(os.environ.get("XPLANE_PATH", str(_STEAM_BASE)))
@@ -60,10 +62,20 @@ OPENAI_TTS_MODEL   = os.environ.get("OPENAI_TTS_MODEL",   "tts-1-hd")
 # STT: 'whisper-1' is the stable choice; 'gpt-4o-transcribe' is newer/better
 OPENAI_STT_MODEL   = os.environ.get("OPENAI_STT_MODEL",   "whisper-1")
 
-# X-Plane PTT DataRef — set to your PTT joystick button DataRef, e.g.:
-#   XPLANE_PTT_DATAREF=sim/joystick/joystick_button_array[32]
-# Use X-Plane's DataRef browser (DataRefTool plugin) to find the right index.
-# Leave empty to disable X-Plane PTT detection; use the UI button instead.
+# X-Plane PTT source — watched over the WebSocket API for instant press/release
+# edges (no 2 Hz polling lag). Auto-detects whether the name is a dataref or a
+# command. Use a DATAREF that holds 1 while the key is pressed:
+#   xpilot/ptt                              # RECOMMENDED — xPilot's PTT dataref.
+#                                           # Bind your key to the "xPilot: Radio
+#                                           # Push-to-Talk" command; the dataref
+#                                           # then holds 1 for the whole press.
+#   sim/joystick/joystick_button_array[32]  # a raw joystick button + index
+#
+# Commands (e.g. sim/operation/contact_atc_ptt) also resolve, but most ATC
+# command bindings fire as a one-shot PULSE (press+release in the same instant),
+# so hold-to-talk recording starts and stops immediately. Use a dataref instead.
+#
+# Leave empty to disable; use the UI button or Spacebar instead.
 XPLANE_PTT_DATAREF = os.environ.get("XPLANE_PTT_DATAREF", "")
 
 # HuggingFace token — loaded from .env; used for authenticated model downloads

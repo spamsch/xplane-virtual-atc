@@ -101,6 +101,9 @@ class FlightState:
     com2_raw: float = 0.0
     transponder: float = 0.0
     ptt_pressed: float = 0.0   # raw DataRef value; use ptt_active property
+    qnh_inhg: float = 0.0      # sea-level pressure, inHg (0 = not yet received)
+    wind_speed_kts: float = 0.0
+    wind_dir_deg: float = 0.0
     _icao_chars: list = field(default_factory=lambda: [0.0] * 4)
     _tail_chars: list = field(default_factory=lambda: [0.0] * 10)
 
@@ -123,6 +126,11 @@ class FlightState:
     @property
     def tail_number(self) -> str:
         return ''.join(chr(int(c)) for c in self._tail_chars if 32 < c < 127).strip()
+
+    @property
+    def qnh_hpa(self) -> int:
+        """QNH in hPa, rounded. Returns 0 if not yet received."""
+        return round(self.qnh_inhg * 33.8639) if self.qnh_inhg > 0 else 0
 
     @property
     def ptt_active(self) -> bool:
