@@ -5,9 +5,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-# Python backend — stdlib only, no install needed
-python3 main.py                      # CLI mode (requires X-Plane running)
-python3 backend/server.py            # WebSocket server for the Tauri UI
+# One-time setup + run (preferred)
+make setup           # venv + deps + ui npm install + .env, checks for claude CLI
+make dev             # backend + Tauri desktop app together
+make dev-web         # backend + browser UI at :1420 (no Rust toolchain)
+make test            # pytest tests/
+
+# Python backend — default deps: websockets, numpy, scipy (requirements.txt).
+# requirements-local.txt (faster-whisper/piper/sounddevice) only for offline voice.
+python3 main.py                      # CLI mode (requires X-Plane running; stdlib only)
+python3 backend/server.py            # WebSocket server for the UI
 
 # Tests (no X-Plane or LLM needed — all mocked)
 pip install -r requirements-dev.txt
@@ -21,6 +28,8 @@ npm run dev          # SvelteKit dev server at :1420
 npm run tauri dev    # Desktop app (requires backend running at ws://localhost:8765)
 npm run tauri build  # Production bundle
 ```
+
+The backend **starts even when unconfigured** (missing apt.dat or keys): it serves a `config_status` ("doctor") over the WebSocket and the UI shows a Settings/onboarding view until Claude + a voice key + the X-Plane path are all present. apt.dat is loaded lazily (`_ensure_airport_db`) so the X-Plane path can be set at runtime via `set_config`.
 
 ## Architecture
 
@@ -63,5 +72,5 @@ The system has three layers that compose cleanly: a **data source**, an **ATC se
 
 - **AI suggests, state machine decides.** Phase and station transitions in `ATCSession` are triggered by keyword matching on LLM output — the LLM never directly drives state. This keeps behavior predictable under hallucination.
 - **Opus at decision boundaries.** boundary_check (runway/callsign decisions) and first-call-per-station always use Opus (`claude-opus-4-8`). Routine exchanges use Sonnet (`claude-sonnet-4-6`). Model selection is in `config.py`.
-- **No external Python dependencies at runtime.** `main.py` and the xplane/airport/atc modules use only stdlib. `websockets` is only needed for `backend/server.py`.
-- **Test suite is fully mocked.** All 210 tests `@patch` the `atc.engine.respond()` and `atc.engine.boundary_check()` calls — no live Claude or X-Plane connection needed to run tests. The `test_full_flight_exchange.py` file contains 20 `xfail` tests marking en-route and arrival phases as not yet fully implemented.
+- **Lean default deps.** `main.py` and the xplane/airport/atc modules use only stdlib. The backend needs `websockets` + `numpy`/`scipy` (audio pipeline). Offline STT/TTS (`faster-whisper`, `piper-tts`) and CLI mic (`sounddevice`) are optional — `requirements-local.txt`. Defaulting to ElevenLabs means the default install pulls no ML model.
+- **Test suite is fully mocked.** All ~340 tests `@patch` the `atc.engine.respond()` and `atc.engine.boundary_check()` calls — no live Claude or X-Plane connection needed. `test_full_flight_exchange.py` contains `xfail` tests marking en-route/arrival phases as not yet fully implemented.

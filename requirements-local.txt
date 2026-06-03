@@ -1,0 +1,6 @@
+# Optional — only for offline (local) voice or CLI push-to-talk.
+# Not needed for the default ElevenLabs path.
+#   pip install -r requirements-local.txt
+faster-whisper>=1.0       # offline STT; downloads a ~1.6 GB model on first use
+piper-tts>=1.1            # offline TTS (ONNX voices)
+sounddevice>=0.4          # CLI push-to-talk mic capture (not used by the UI)

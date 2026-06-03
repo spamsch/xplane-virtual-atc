@@ -48,20 +48,18 @@ Design notes live in [`CLAUDE.md`](CLAUDE.md).
 
 ## Quickstart
 
-### Backend + desktop UI
-
 ```bash
-# 1. Backend (WebSocket server at ws://localhost:8765)
-pip install -r requirements-dev.txt        # websockets
-python3 backend/server.py
-
-# 2. UI (in a second terminal)
-cd ui && npm install
-npm run tauri dev                            # desktop app
-# or: npm run dev                            # browser at :1420
+make setup     # venv + Python deps + UI deps + .env, and checks for the claude CLI
+make dev       # runs the backend and the desktop (Tauri) app together
+# or:
+make dev-web   # backend + browser UI at http://localhost:1420 (no Rust toolchain)
 ```
 
-Start X-Plane, load a flight, and the backend auto-detects it within ~2 seconds. Taxi or fly near an airport and the controller comes alive.
+On first launch the app opens a **Settings view** with a checklist (the "doctor"): paste your ElevenLabs API key, confirm your X-Plane path, and you're flying. Claude needs nothing here — it uses the `claude` CLI you're already signed into. No file editing required; the key is saved to `.env` for you.
+
+Then start a flight in X-Plane (the backend auto-detects it within ~2 s), or load a scenario from the UI to fly without the sim.
+
+The default install is small — `requirements.txt` is just `websockets`, `numpy`, `scipy`. The ElevenLabs voice path needs no model download.
 
 ### Terminal CLI
 
@@ -69,13 +67,15 @@ Start X-Plane, load a flight, and the backend auto-detects it within ~2 seconds.
 python3 main.py                              # requires X-Plane running
 ```
 
-### Voice (optional)
+### Offline voice (optional)
+
+By default voice runs on ElevenLabs (cloud). For fully local STT/TTS — or the CLI's mic capture — install the extras:
 
 ```bash
-pip install -r requirements-audio.txt
+pip install -r requirements-local.txt        # faster-whisper, piper-tts, sounddevice
 ```
 
-Speech providers are auto-selected: ElevenLabs (if `ELEVENLABS_API_KEY` is set), then OpenAI (if `OPENAI_API_KEY` is set), then local (Whisper for STT / Piper / macOS `say` for TTS). See [Configuration](#configuration).
+Providers are auto-selected: ElevenLabs (if `ELEVENLABS_API_KEY` is set) → OpenAI (if `OPENAI_API_KEY`) → local (Whisper / Piper / macOS `say`). See [Configuration](#configuration).
 
 ### Tests
 
@@ -83,14 +83,14 @@ The suite is fully mocked — no X-Plane and no live Claude needed.
 
 ```bash
 pip install -r requirements-dev.txt
-pytest tests/                                # 336 tests
+pytest tests/                                # 342 tests
 pytest tests/test_session.py -v              # one file
 pytest tests/ -k squawk                      # by name
 ```
 
 ## Configuration
 
-Set these via environment variables or a local `.env` file in the project root (gitignored — never committed).
+The easiest path is the in-app **Settings view** (gear icon, top-right) — it shows a live checklist and writes your keys to `.env` for you. Everything below can also be set by hand via environment variables or a `.env` file in the project root (gitignored — never committed). Copy `.env.example` to `.env` to start.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
@@ -137,7 +137,7 @@ aircraft/     aircraft type lookup
 audio/        STT, TTS, and radio DSP
 scenarios/    JSON scenarios for the simulator data source
 ui/           Tauri 2 + SvelteKit 5 desktop app
-tests/        336 mocked tests
+tests/        342 mocked tests
 ```
 
 ## License

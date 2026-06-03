@@ -7,7 +7,7 @@ import {
   wsStatus, backendUptime, source, scenarioName, xplaneConnected,
   flightState, airport, activeRunway, atcCallsign, boundaryNotes,
   messages, phase, station, thinking, loading, loadingLabel,
-  pttActive, transcription, audioEnabled,
+  configStatus, pttActive, transcription, audioEnabled,
 } from './store.js';
 import { playMicClick } from './sound.js';
 
@@ -167,6 +167,10 @@ function dispatch(msg) {
       loadingLabel.set(msg.label ?? '');
       break;
 
+    case 'config_status':
+      configStatus.set(msg);
+      break;
+
     case 'state_update':
       flightState.set(msg);
       break;
@@ -262,6 +266,10 @@ export function setSource(src) {
 
 export function newFlight() {
   sendMessage('new_flight');
+}
+
+export function setConfig(cfg) {
+  sendMessage('set_config', { config: cfg });
 }
 
 function connect() {

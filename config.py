@@ -20,11 +20,52 @@ XPLANE_REST_PORT = int(os.environ.get("XPLANE_REST_PORT", "8086"))
 _STEAM_BASE = Path.home() / "Library/Application Support/Steam/steamapps/common/X-Plane 12"
 XPLANE_BASE = Path(os.environ.get("XPLANE_PATH", str(_STEAM_BASE)))
 
-APT_DAT_PATHS = [
-    XPLANE_BASE / "Global Scenery" / "Global Airports" / "Earth nav data" / "apt.dat",
-    XPLANE_BASE / "Custom Scenery" / "Global Airports" / "Earth nav data" / "apt.dat",
-    XPLANE_BASE / "Resources" / "default scenery" / "default apt dat" / "Earth nav data" / "apt.dat",
-]
+
+def _apt_dat_paths(base: Path) -> list:
+    """Candidate apt.dat locations under an X-Plane install."""
+    return [
+        base / "Global Scenery" / "Global Airports" / "Earth nav data" / "apt.dat",
+        base / "Custom Scenery" / "Global Airports" / "Earth nav data" / "apt.dat",
+        base / "Resources" / "default scenery" / "default apt dat" / "Earth nav data" / "apt.dat",
+    ]
+
+
+APT_DAT_PATHS = _apt_dat_paths(XPLANE_BASE)
+
+
+def set_xplane_path(path: str) -> None:
+    """Point the airport lookup at a new X-Plane install (from the Settings view)."""
+    global XPLANE_BASE, APT_DAT_PATHS
+    XPLANE_BASE = Path(path)
+    APT_DAT_PATHS = _apt_dat_paths(XPLANE_BASE)
+
+
+def set_env(key: str, value: str) -> None:
+    """Persist KEY=value to .env and update the live process + this module.
+
+    Consumers read config.<KEY> at call time, so updating the module global takes
+    effect immediately. Other .env lines are preserved; the file is chmod 600.
+    """
+    value = value.strip()
+    globals()[key] = value          # update e.g. config.ELEVENLABS_API_KEY
+    os.environ[key] = value
+    lines, found = [], False
+    if _env_file.exists():
+        for line in _env_file.read_text().splitlines():
+            stripped = line.strip()
+            if (stripped and not stripped.startswith("#")
+                    and stripped.split("=", 1)[0].strip() == key):
+                lines.append(f"{key}={value}")
+                found = True
+            else:
+                lines.append(line)
+    if not found:
+        lines.append(f"{key}={value}")
+    _env_file.write_text("\n".join(lines) + "\n")
+    try:
+        _env_file.chmod(0o600)
+    except OSError:
+        pass
 
 AIRPORT_DETECTION_RADIUS_NM = 5.0
 RUNWAY_DETECTION_MARGIN_M = 40.0

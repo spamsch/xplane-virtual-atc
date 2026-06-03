@@ -18,6 +18,9 @@ Server → client event types:
   thinking         thinking (bool)
   phase_change     phase, station
   source_change    source ("xplane"|"simulated"), scenario_name
+  xplane_status    connected (bool) — live X-Plane REST link state
+  loading          active (bool), label — session setup (boundary check) in progress
+  config_status    checks{...}, configured (bool), current{...} — the setup "doctor"
   error            message
 
 Client → server message types:
@@ -25,12 +28,15 @@ Client → server message types:
   pilot_audio         audio (base64 WAV from mic)             [if AUDIO_ENABLED]
   load_scenario       scenario (dict matching Scenario.to_dict())
   set_source          source ("xplane"|"simulated")
+  set_config          config {elevenlabs_api_key?, openai_api_key?, xplane_path?, xplane_ptt_dataref?}
+  get_config_status   (no payload) — request a fresh config_status
 """
 
 import asyncio
 import base64
 import json
 import logging
+import shutil
 import sys
 import time
 from pathlib import Path
@@ -86,6 +92,7 @@ _ptt_listener: Optional[PTTListener] = None   # WebSocket PTT edge listener
 _tx_lock: Optional[asyncio.Lock] = None   # serialise concurrent LLM calls
 _loop: Optional[asyncio.AbstractEventLoop] = None   # main loop (for thread-safe scheduling)
 _xplane_connected: bool = False  # is the X-Plane REST API actually reachable right now
+_airport_db_loading: bool = False   # apt.dat parse in progress (deferred until configured)
 
 MAX_AUDIO_BYTES = 2 * 1024 * 1024   # 2 MB ≈ 62 s at 16 kHz 16-bit mono
 ACF_TAILNUM_BYTES = 40              # sim/aircraft/view/acf_tailnum is char[40]
@@ -180,6 +187,7 @@ async def _send_current_state(ws: WebSocketServerProtocol):
                    airport_loaded=_current_airport is not None,
                    audio_ready=_AUDIO_READY,
                    xplane_connected=_xplane_connected)
+    await _send_to(ws, "config_status", **_config_status())
     if _driver:
         await _send_to(ws, "state_update", **_state_dict(_driver.state))
     if _current_airport:
@@ -234,6 +242,10 @@ async def _handle_client_message(msg: dict):
         await _tune_com2(float(msg["freq_mhz"]))
     elif t == "new_flight":
         await _new_flight()
+    elif t == "set_config":
+        await _set_config(msg.get("config", {}))
+    elif t == "get_config_status":
+        await _broadcast_config_status()
 
 
 async def _process_transmission(text: str):
@@ -502,6 +514,7 @@ async def _set_xplane_connected(connected: bool):
         return
     _xplane_connected = connected
     await _broadcast("xplane_status", connected=connected)
+    await _broadcast_config_status()   # the link is one of the doctor checks
     if connected:
         await _start_ptt_listener()
     else:
@@ -757,19 +770,117 @@ async def _heartbeat_loop():
                          airport_loaded=_current_airport is not None,
                          audio_ready=_AUDIO_READY,
                          xplane_connected=_xplane_connected)
+        # Keep the doctor live (e.g. picks up a newly-installed claude CLI).
+        await _broadcast_config_status()
         await asyncio.sleep(5.0)
 
 
 # ------------------------------------------------------------------ #
 # Entry point
 
-def _find_apt_dat() -> Path:
+def _find_apt_dat_or_none() -> Optional[Path]:
     for p in config.APT_DAT_PATHS:
         if p.exists():
             return p
-    raise FileNotFoundError(
-        f"apt.dat not found. Set XPLANE_PATH.\nChecked: {config.APT_DAT_PATHS}"
-    )
+    return None
+
+
+async def _ensure_airport_db(force: bool = False) -> bool:
+    """Parse apt.dat into the airport DB if we can find it. Non-fatal.
+
+    Deferred so the backend can start before the X-Plane path is configured;
+    called again from _set_config once the user provides the path.
+    """
+    global _airport_db, _airport_db_loading
+    if _airport_db is not None and not force:
+        return True
+    if _airport_db_loading:
+        return False
+    apt = _find_apt_dat_or_none()
+    if apt is None:
+        return False
+    _airport_db_loading = True
+    try:
+        log.info(f"Loading airport database from {apt} …")
+        airports = await asyncio.to_thread(parse_apt_dat, apt)
+        _airport_db = AirportDB(airports)
+        log.info(f"{len(airports):,} airports ready")
+    except Exception as e:
+        log.warning(f"Airport DB load failed: {e}")
+        return False
+    finally:
+        _airport_db_loading = False
+    await _broadcast_config_status()
+    return True
+
+
+def _config_status() -> dict:
+    """The 'doctor' — what's configured and what's missing, as data the GUI renders."""
+    claude_ok = shutil.which("claude") is not None
+    el_key    = bool(config.ELEVENLABS_API_KEY)
+    voice_ok  = el_key or bool(config.OPENAI_API_KEY)
+    apt       = _find_apt_dat_or_none()
+    apt_ok    = apt is not None
+
+    checks = {
+        "claude": {
+            "ok": claude_ok, "label": "Claude CLI",
+            "detail": "ready" if claude_ok
+                      else "not found on PATH — install from claude.ai/code",
+        },
+        "voice": {
+            "ok": voice_ok, "label": "Voice provider",
+            "detail": ("ElevenLabs key set" if el_key
+                       else "OpenAI key set" if voice_ok
+                       else "add your ElevenLabs API key for speech"),
+        },
+        "xplane_path": {
+            "ok": apt_ok, "label": "X-Plane data (apt.dat)",
+            "detail": str(apt) if apt_ok
+                      else "not found — set your X-Plane install path",
+        },
+        "xplane_link": {
+            "ok": _xplane_connected, "label": "X-Plane connection",
+            "detail": "connected" if _xplane_connected
+                      else "optional — start a flight in X-Plane, or load a scenario",
+        },
+    }
+    return {
+        "checks": checks,
+        # Minimum to run: Claude (LLM) + a voice provider + airport data.
+        # A live X-Plane link is optional — scenarios work offline.
+        "configured": claude_ok and voice_ok and apt_ok,
+        "current": {
+            "xplane_path":        str(config.XPLANE_BASE),
+            "xplane_ptt_dataref": config.XPLANE_PTT_DATAREF,
+            "has_elevenlabs":     el_key,
+            "has_openai":         bool(config.OPENAI_API_KEY),
+        },
+    }
+
+
+async def _broadcast_config_status():
+    await _broadcast("config_status", **_config_status())
+
+
+async def _set_config(cfg: dict):
+    """Persist config from the Settings view (keys, X-Plane path) and reload."""
+    if cfg.get("elevenlabs_api_key") is not None:
+        config.set_env("ELEVENLABS_API_KEY", cfg["elevenlabs_api_key"])
+    if cfg.get("openai_api_key") is not None:
+        config.set_env("OPENAI_API_KEY", cfg["openai_api_key"])
+    if cfg.get("xplane_ptt_dataref") is not None:
+        config.set_env("XPLANE_PTT_DATAREF", cfg["xplane_ptt_dataref"])
+    if cfg.get("xplane_path"):
+        config.set_env("XPLANE_PATH", cfg["xplane_path"])
+        config.set_xplane_path(cfg["xplane_path"])
+        await _ensure_airport_db(force=True)
+
+    # Re-verify voice now that keys may have changed (logs the active backend).
+    if _AUDIO_READY:
+        await asyncio.to_thread(_audio_tts.check)
+    await _broadcast_config_status()
+    log.info("Configuration updated via Settings.")
 
 
 async def run():
@@ -781,14 +892,16 @@ async def run():
     logging.basicConfig(level=logging.INFO,
                         format="%(levelname)s %(name)s: %(message)s")
 
-    log.info("Loading airport database...")
-    apt_dat = _find_apt_dat()
-    airports = parse_apt_dat(apt_dat)
-    _airport_db = AirportDB(airports)
-    acdb.load()
-    log.info(f"{len(airports):,} airports ready")
+    acdb.load()   # small aircraft DB — always available
 
-    # Pre-load Whisper model so the first PTT press isn't delayed by a 3 GB download
+    # Load airports if we can find apt.dat; otherwise start unconfigured and let
+    # the Settings view supply the X-Plane path.
+    if not await _ensure_airport_db():
+        log.warning(
+            "apt.dat not found — starting unconfigured. Set your X-Plane path "
+            "in the app's Settings view."
+        )
+
     if _AUDIO_READY:
         await asyncio.to_thread(_audio_stt.preload)   # STT: loads model or verifies cloud key
         await asyncio.to_thread(_audio_tts.check)     # TTS: log backend + verify key

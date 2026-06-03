@@ -1,5 +1,5 @@
 <script>
-  import { wsStatus, source, scenarioName, phase, station, atcCallsign, backendUptime, xplaneConnected } from './store.js';
+  import { wsStatus, source, scenarioName, phase, station, atcCallsign, backendUptime, xplaneConnected, settingsOpen } from './store.js';
 
   const phaseLabel = {
     PRE_DEPARTURE: 'Pre-departure', GROUND_DEPARTURE: 'Ground', TAXIING: 'Taxiing',
@@ -45,11 +45,12 @@
     {/if}
   </div>
 
-  <!-- Right: ATC callsign + phase -->
+  <!-- Right: ATC callsign + phase + settings -->
   <div class="group right">
     <span class="station-badge">{stationLabel[$station] ?? $station}</span>
     <span class="callsign">{$atcCallsign}</span>
     <span class="phase-label muted">{phaseLabel[$phase] ?? $phase}</span>
+    <button class="settings-btn" onclick={() => settingsOpen.set(true)} title="Settings">⚙</button>
   </div>
 </header>
 
@@ -115,4 +116,9 @@
 
   .callsign { color: var(--text); font-weight: 600; }
   .phase-label { font-size: 11px; }
+  .settings-btn {
+    background: none; color: var(--text-muted); font-size: 14px;
+    width: 22px; height: 22px; border-radius: var(--radius);
+  }
+  .settings-btn:hover { background: var(--bg-input); color: var(--text); }
 </style>

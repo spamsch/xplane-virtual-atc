@@ -1,4 +1,3 @@
-websockets>=12.0
+# Dev/test deps = the backend runtime plus pytest.
+-r requirements.txt
 pytest>=9.0
-numpy>=1.24      # needed for audio/ tests
-scipy>=1.10      # needed for audio/ tests

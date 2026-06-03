@@ -26,6 +26,8 @@ export const thinking = writable(false);
 export const scenarioDrawerOpen = writable(false);
 export const loading      = writable(false);   // backend is setting up a session (boundary check)
 export const loadingLabel = writable('');       // human-readable loading message
+export const configStatus = writable(null);     // {checks, configured, current} — the setup doctor
+export const settingsOpen = writable(false);    // Settings/config view manually opened
 
 // Audio
 export const pttActive       = writable(false);   // mic is recording

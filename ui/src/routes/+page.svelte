@@ -6,14 +6,19 @@
   import RadioPane from '$lib/RadioPane.svelte';
   import AirportPanel from '$lib/AirportPanel.svelte';
   import ScenarioDrawer from '$lib/ScenarioDrawer.svelte';
-  import { scenarioDrawerOpen, wsStatus, xplaneConnected, airport, loading, loadingLabel } from '$lib/store.js';
+  import ConfigView from '$lib/ConfigView.svelte';
+  import { scenarioDrawerOpen, wsStatus, xplaneConnected, airport, loading, loadingLabel,
+           configStatus, settingsOpen } from '$lib/store.js';
 
   onMount(() => initWs());
   onDestroy(() => closeWs());
 
   $: offline = $wsStatus !== 'connected';
-  // Idle: backend up, nothing loading, no flight/airport yet.
-  $: idle = !offline && !$loading && !$airport;
+  // Needs setup: backend up, status received, and not yet configured.
+  $: needsConfig = !offline && $configStatus && !$configStatus.configured;
+  $: showConfig = !offline && (needsConfig || $settingsOpen);
+  // Idle: backend up, configured, nothing loading, no flight/airport yet.
+  $: idle = !offline && !needsConfig && !$loading && !$airport;
   function openScenario() { scenarioDrawerOpen.set(true); }
 </script>
 
@@ -56,6 +61,10 @@
 
   {#if $scenarioDrawerOpen}
     <ScenarioDrawer />
+  {/if}
+
+  {#if showConfig}
+    <ConfigView />
   {/if}
 </div>
 
