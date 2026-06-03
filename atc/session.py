@@ -63,6 +63,11 @@ class ATCResponse:
     runway: Optional[str] = None
     qnh: Optional[int] = None
     model: Optional[str] = None             # model used to generate this response
+    # Set when the pilot called a handed-off station before tuning COM1 to it.
+    # No LLM was called; the new station didn't "hear" the transmission.
+    on_wrong_frequency: bool = False
+    expected_frequency: Optional[float] = None   # freq COM1 must be on to reach the station
+    pending_station: Optional[str] = None        # station label the pilot was trying to reach
 
 
 # ------------------------------------------------------------------ #
@@ -123,6 +128,16 @@ def _generate_squawk() -> str:
         code = ''.join(str(random.randint(0, 7)) for _ in range(4))
         if code not in _RESERVED_SQUAWKS and not code.startswith('7'):
             return code
+
+
+# Tolerance for matching live COM1 to a handoff frequency, in MHz. 0.02 covers
+# 8.33 kHz channels labelled at 25 kHz spacing and float rounding, without
+# letting an adjacent 25 kHz channel slip through.
+_FREQ_MATCH_TOL = 0.02
+
+
+def _freq_matches(com1_mhz: float, target_mhz: float) -> bool:
+    return abs(com1_mhz - target_mhz) <= _FREQ_MATCH_TOL
 
 
 # ------------------------------------------------------------------ #
@@ -207,16 +222,46 @@ class ATCSession:
 
         self._history: list[dict] = []
         self._stations_seen: set[Station] = set()   # stations that have had ≥1 response
+        # A handoff the controller issued ("contact X on FREQ") that the pilot
+        # has not yet tuned COM1 to. (station, freq_mhz). Only used when the
+        # caller passes live COM1 to process(); None otherwise (CLI/tests switch
+        # immediately as before).
+        self._pending_handoff: Optional[tuple["Station", float]] = None
 
     # -------------------------------------------------------------- #
     # Public interface
 
-    def process(self, pilot_message: str) -> ATCResponse:
+    def process(self, pilot_message: str,
+                com1_mhz: Optional[float] = None) -> ATCResponse:
+        """Generate the ATC reply to a pilot transmission.
+
+        com1_mhz: the aircraft's live COM1 frequency, if known. When provided,
+        a station the controller handed the pilot off to will only answer once
+        COM1 is actually tuned to its frequency — otherwise an on_wrong_frequency
+        response is returned and no LLM call is made. When None (CLI / tests),
+        handoffs take effect immediately, as before.
+        """
         call = parse_radio_call(pilot_message)
 
         # Detect station switch from the pilot's own transmission
         pilot_station = _PARSER_TO_STATION.get(call.station or '')
         if pilot_station and pilot_station != self.current_station:
+            # If this is a handed-off station and we know COM1, require the pilot
+            # to be tuned to it before that station will respond.
+            if (com1_mhz is not None and self._pending_handoff
+                    and self._pending_handoff[0] == pilot_station):
+                target_freq = self._pending_handoff[1]
+                if not _freq_matches(com1_mhz, target_freq):
+                    return ATCResponse(
+                        text="",
+                        phase_after=self.phase,
+                        station_after=self.current_station,
+                        on_wrong_frequency=True,
+                        expected_frequency=target_freq,
+                        pending_station=_STATION_LABELS.get(pilot_station, "the next station"),
+                    )
+                # Tuned correctly — complete the handoff.
+                self._pending_handoff = None
             self._switch_station(pilot_station)
 
         # Decide whether to pre-assign a squawk
@@ -313,7 +358,13 @@ class ATCSession:
         if freq_change:
             new_station = self._station_from_freq(freq_change)
             if new_station and new_station != self.current_station:
-                self._switch_station(new_station)
+                if com1_mhz is None:
+                    # Legacy: no live COM1 — switch immediately.
+                    self._switch_station(new_station)
+                else:
+                    # Defer: the new station won't answer until the pilot tunes
+                    # COM1 to this frequency (checked on the next transmission).
+                    self._pending_handoff = (new_station, freq_change)
 
         # Update history
         self._history.append({

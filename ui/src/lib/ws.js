@@ -4,7 +4,7 @@
  */
 
 import {
-  wsStatus, backendUptime, source, scenarioName,
+  wsStatus, backendUptime, source, scenarioName, xplaneConnected,
   flightState, airport, activeRunway, atcCallsign, boundaryNotes,
   messages, phase, station, thinking,
   pttActive, transcription, audioEnabled,
@@ -153,8 +153,13 @@ function dispatch(msg) {
     case 'backend_status':
       backendUptime.set(msg.uptime_s);
       source.set(msg.source);
+      if (msg.xplane_connected !== undefined) xplaneConnected.set(msg.xplane_connected);
       // Gate mic UI on backend capability, not just local mic permission
       if (!msg.audio_ready) audioEnabled.set(false);
+      break;
+
+    case 'xplane_status':
+      xplaneConnected.set(msg.connected);
       break;
 
     case 'state_update':

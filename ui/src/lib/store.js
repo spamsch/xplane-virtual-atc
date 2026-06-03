@@ -4,6 +4,7 @@ import { writable, derived } from 'svelte/store';
 export const wsStatus = writable('disconnected'); // 'disconnected'|'connecting'|'connected'|'error'
 export const backendUptime = writable(0);
 export const source = writable('simulated');       // 'xplane'|'simulated'
+export const xplaneConnected = writable(false);    // X-Plane REST API reachable right now
 export const scenarioName = writable(null);
 
 // Flight state (mirrors FlightState in Python)

@@ -64,6 +64,7 @@ if config.AUDIO_ENABLED:
         from audio import radio as _audio_radio
         from audio import tts   as _audio_tts
         from audio import stt   as _audio_stt
+        from audio import radio_text as _radio_text
         _AUDIO_READY = True
     except ImportError as _e:
         log.warning(f"Audio modules unavailable ({_e}); running text-only.")
@@ -84,6 +85,7 @@ _prev_ptt: bool = False          # last broadcast PTT state (de-dupe spurious en
 _ptt_listener: Optional[PTTListener] = None   # WebSocket PTT edge listener
 _tx_lock: Optional[asyncio.Lock] = None   # serialise concurrent LLM calls
 _loop: Optional[asyncio.AbstractEventLoop] = None   # main loop (for thread-safe scheduling)
+_xplane_connected: bool = False  # is the X-Plane REST API actually reachable right now
 
 MAX_AUDIO_BYTES = 2 * 1024 * 1024   # 2 MB ≈ 62 s at 16 kHz 16-bit mono
 ACF_TAILNUM_BYTES = 40              # sim/aircraft/view/acf_tailnum is char[40]
@@ -176,7 +178,8 @@ async def _send_current_state(ws: WebSocketServerProtocol):
                    uptime_s=int(time.time() - _start_time),
                    source=_source,
                    airport_loaded=_current_airport is not None,
-                   audio_ready=_AUDIO_READY)
+                   audio_ready=_AUDIO_READY,
+                   xplane_connected=_xplane_connected)
     if _driver:
         await _send_to(ws, "state_update", **_state_dict(_driver.state))
     if _current_airport:
@@ -251,16 +254,36 @@ async def _process_transmission_locked(text: str):
             await _broadcast("error", message="No active session — load a scenario first.")
             return
 
+        # Pass live COM1 (X-Plane only) so a handed-off station won't answer
+        # until the pilot has actually tuned to its frequency.
+        com1 = None
+        if _source == "xplane" and _driver is not None:
+            st = _driver.state
+            if st.is_flight_loaded:
+                com1 = st.com1_mhz
+
         # session.process() is blocking (calls claude subprocess)
-        r = await asyncio.to_thread(_session.process, text)
+        r = await asyncio.to_thread(_session.process, text, com1)
+
+        # Pilot called a station they haven't tuned to — no reply, just a nudge.
+        if r.on_wrong_frequency:
+            freq = r.expected_frequency
+            await _broadcast(
+                "error",
+                message=f"No reply — set COM1 to {freq:.3f} to reach {r.pending_station}.",
+            )
+            return
 
         await _broadcast("atc_message", role="atc", text=r.text,
                          model=r.model, timestamp=time.time())
 
-        # Synthesize ATC audio (non-fatal if TTS unavailable)
+        # Synthesize ATC audio (non-fatal if TTS unavailable). The spoken form
+        # is normalized (callsigns → NATO, numbers → digits) so any TTS backend
+        # reads it like a controller; the displayed text above stays compact.
         if _AUDIO_READY:
             try:
-                samples, sr = await asyncio.to_thread(_audio_tts.synthesize, r.text)
+                spoken = _radio_text.to_spoken(r.text)
+                samples, sr = await asyncio.to_thread(_audio_tts.synthesize, spoken)
                 samples      = _audio_radio.apply_radio_fx(samples, sr)
                 wav_bytes    = _audio_radio.encode_wav(samples, sr)
                 await _broadcast("atc_audio",
@@ -338,8 +361,8 @@ async def _load_scenario(data: dict):
     _current_airport = None
     _session = None
 
-    # Leaving the live X-Plane source — tear down its PTT listener.
-    await _stop_ptt_listener()
+    # Leaving the live X-Plane source — tear down its PTT listener + link state.
+    await _set_xplane_connected(False)
 
     sim = ScenarioSimulator(scenario)
     _driver = sim
@@ -472,22 +495,36 @@ def _schedule(coro):
         coro.close()   # loop gone — drop it without a 'never awaited' warning
 
 
+async def _set_xplane_connected(connected: bool):
+    """Update + broadcast X-Plane link state, and gate the PTT listener on it."""
+    global _xplane_connected
+    if connected == _xplane_connected:
+        return
+    _xplane_connected = connected
+    await _broadcast("xplane_status", connected=connected)
+    if connected:
+        await _start_ptt_listener()
+    else:
+        await _stop_ptt_listener()
+
+
 def _on_xplane_connected():
     """Connector callback (background thread) — X-Plane REST API reachable."""
-    _schedule(_start_ptt_listener())
+    log.info("X-Plane connected")
+    _schedule(_set_xplane_connected(True))
 
 
 def _on_xplane_disconnected():
     """Connector callback (background thread) — X-Plane went away."""
     log.info("X-Plane disconnected — stopping PTT listener")
-    _schedule(_stop_ptt_listener())
+    _schedule(_set_xplane_connected(False))
 
 
 async def _set_source(source: str):
     global _source, _prev_ptt
-    # Reset PTT state so we don't emit a spurious ptt_end if the previous
+    # Reset link + PTT state so we don't emit a spurious ptt_end if the previous
     # source had PTT active at the moment of the switch.
-    await _stop_ptt_listener()
+    await _set_xplane_connected(False)
     if _prev_ptt:
         await _broadcast("ptt_end")
     _prev_ptt = False
@@ -705,7 +742,8 @@ async def _heartbeat_loop():
                          uptime_s=int(time.time() - _start_time),
                          source=_source,
                          airport_loaded=_current_airport is not None,
-                         audio_ready=_AUDIO_READY)
+                         audio_ready=_AUDIO_READY,
+                         xplane_connected=_xplane_connected)
         await asyncio.sleep(5.0)
 
 

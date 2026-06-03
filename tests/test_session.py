@@ -310,6 +310,52 @@ class TestProcess:
         assert r.frequency_change == pytest.approx(118.175)
         assert r.station_after == Station.TWR
 
+
+class TestHandoffFrequencyGate:
+    """With live COM1, a handed-off station only answers once COM1 is tuned."""
+
+    def test_handoff_deferred_until_tuned(self, eddv, eddg, c172, conditions):
+        s = make_session(eddv, eddg, c172, conditions)
+        # Ground hands off to Tower 118.175; COM1 still on Ground (121.900).
+        with mock_respond("D-EIYD, contact Tower 118.175."):
+            r = s.process("D-EIYD, ready at Alpha.", com1_mhz=121.900)
+        assert r.station_after == Station.GND          # not switched yet
+        assert s._pending_handoff[0] == Station.TWR
+
+        # Pilot calls Tower but hasn't retuned → no reply, a nudge instead.
+        with mock_respond("(should not be called)"):
+            r = s.process("Hannover Tower, D-EIYD, ready.", com1_mhz=121.900)
+        assert r.on_wrong_frequency is True
+        assert r.expected_frequency == pytest.approx(118.175)
+        assert r.text == ""
+        assert s.current_station == Station.GND
+
+    def test_handoff_completes_after_tuning(self, eddv, eddg, c172, conditions):
+        s = make_session(eddv, eddg, c172, conditions)
+        with mock_respond("D-EIYD, contact Tower 118.175."):
+            s.process("D-EIYD, ready at Alpha.", com1_mhz=121.900)
+        # Now tuned to Tower → it answers and the station switches.
+        with mock_respond("D-EIYD, Hannover Tower, hold short runway 27L."):
+            r = s.process("Hannover Tower, D-EIYD, ready.", com1_mhz=118.175)
+        assert r.on_wrong_frequency is False
+        assert r.station_after == Station.TWR
+        assert s._pending_handoff is None
+
+    def test_tolerance_allows_833_rounding(self, eddv, eddg, c172, conditions):
+        s = make_session(eddv, eddg, c172, conditions)
+        with mock_respond("D-EIYD, contact Tower 118.175."):
+            s.process("D-EIYD, ready.", com1_mhz=121.900)
+        with mock_respond("D-EIYD, Hannover Tower, pass your message."):
+            r = s.process("Hannover Tower, D-EIYD.", com1_mhz=118.180)  # 5 kHz off
+        assert r.station_after == Station.TWR
+
+    def test_no_com1_keeps_legacy_immediate_switch(self, eddv, eddg, c172, conditions):
+        s = make_session(eddv, eddg, c172, conditions)
+        with mock_respond("D-EIYD, contact Tower 118.175."):
+            r = s.process("D-EIYD, ready at Alpha.")   # com1 unknown
+        assert r.station_after == Station.TWR          # switches immediately
+        assert s._pending_handoff is None
+
     def test_history_grows_with_each_call(self, eddv, eddg, c172, conditions):
         s = make_session(eddv, eddg, c172, conditions)
         with mock_respond("Startup approved."):

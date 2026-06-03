@@ -1,5 +1,5 @@
 <script>
-  import { wsStatus, source, scenarioName, phase, station, atcCallsign, backendUptime } from './store.js';
+  import { wsStatus, source, scenarioName, phase, station, atcCallsign, backendUptime, xplaneConnected } from './store.js';
 
   const phaseLabel = {
     PRE_DEPARTURE: 'Pre-departure', GROUND_DEPARTURE: 'Ground', TAXIING: 'Taxiing',
@@ -34,6 +34,12 @@
     <span class="tag" class:simulated={$source === 'simulated'} class:xplane={$source === 'xplane'}>
       {$source === 'xplane' ? 'X-PLANE' : 'SIMULATED'}
     </span>
+    {#if $source === 'xplane'}
+      <span class="link" class:linked={$xplaneConnected} class:nolink={!$xplaneConnected}>
+        <span class="dot" class:green={$xplaneConnected} class:red={!$xplaneConnected}></span>
+        {$xplaneConnected ? 'LINKED' : 'NO LINK'}
+      </span>
+    {/if}
     {#if $scenarioName}
       <span class="scenario-name">{$scenarioName}</span>
     {/if}
@@ -85,6 +91,15 @@
   }
   .tag.simulated { background: rgba(188, 140, 255, 0.15); color: var(--accent-purple); }
   .tag.xplane    { background: rgba(63, 185, 80, 0.15);  color: var(--accent-green); }
+
+  .link {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-size: 11px; font-weight: 700; letter-spacing: 0.05em;
+  }
+  .link.linked { color: var(--accent-green); }
+  .link.nolink { color: var(--accent-red); }
+  .link.nolink .dot { animation: blink 1.2s steps(2, start) infinite; }
+  @keyframes blink { 50% { opacity: 0.25; } }
 
   .scenario-name { color: var(--text-muted); font-size: 11px; }
 

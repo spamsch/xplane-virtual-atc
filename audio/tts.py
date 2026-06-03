@@ -128,6 +128,7 @@ def _elevenlabs_request(text: str, voice_id: str) -> bytes:
     payload = json.dumps({
         "text": text,
         "model_id": config.ELEVENLABS_TTS_MODEL,
+        "voice_settings": {"speed": config.ELEVENLABS_TTS_SPEED},
     }).encode()
     req = urllib.request.Request(
         url,
