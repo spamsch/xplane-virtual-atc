@@ -968,4 +968,9 @@ async def run():
 
 
 if __name__ == "__main__":
-    asyncio.run(run())
+    # Ctrl-C cancels the gathered loops; asyncio.run() then re-raises
+    # KeyboardInterrupt. Swallow it so shutdown is one clean line, not a trace.
+    try:
+        asyncio.run(run())
+    except KeyboardInterrupt:
+        print("\nStopped. Clear skies.")
