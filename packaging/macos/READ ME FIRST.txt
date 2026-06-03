@@ -9,6 +9,17 @@ What you need
 -------------
 - A Mac (Apple Silicon or Intel).
 - X-Plane 12.
+- A Claude subscription (claude.ai) — this is the controller's brain. You sign
+  in during setup; there's no API key to paste.
+- An ElevenLabs API key — the default voice. With the defaults, ElevenLabs does
+  BOTH the controller's voice (text-to-speech) and understanding what you say
+  (speech-to-text). Create a key at:
+      https://elevenlabs.io/app/developers/api-keys
+  Give the key these permissions (or just leave it unrestricted):
+      - Text to Speech  — access   (the controller's voice)
+      - Speech to Text  — access   (transcribes what you say)
+      - User            — read     (lets the app check the key is valid)
+  You paste this key into the app's Settings screen, not here.
 - An internet connection the first time (to install Python and Claude).
 
 

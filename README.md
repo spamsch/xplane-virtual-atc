@@ -4,6 +4,24 @@
 
 ![X-Plane Virtual ATC](docs/screenshot.png)
 
+## What you need
+
+The defaults are built around two paid/account services. Both are required for the normal experience:
+
+- **A Mac** (Apple Silicon or Intel) and **X-Plane 12**.
+- **A Claude subscription** ([claude.ai](https://claude.ai)) — the controller's brain. You sign in through the `claude` CLI during setup; there is no API key to paste.
+- **An ElevenLabs API key** — the default voice provider. With the defaults, ElevenLabs handles **both** the controller's voice (text-to-speech) **and** transcribing what you say (speech-to-text). Create a key at **[elevenlabs.io/app/developers/api-keys](https://elevenlabs.io/app/developers/api-keys)** and give it these permissions (or leave the key unrestricted):
+
+  | Permission | Access | Why it's needed |
+  |---|---|---|
+  | Text to Speech | enabled | the controller's spoken voice |
+  | Speech to Text | enabled | transcribes your push-to-talk radio calls |
+  | User | read only | lets the app verify the key works on startup |
+
+  You paste this key into the app's **Settings** screen (not into any file).
+
+> Prefer not to use ElevenLabs? You can switch to OpenAI, or fully local STT/TTS (Whisper + Piper) — see [Configuration](#configuration). The steps below assume the ElevenLabs defaults.
+
 ## Download the app (Mac — easiest)
 
 A prebuilt macOS app is published on the [Releases page](https://github.com/spamsch/xplane-virtual-atc/releases). It includes the desktop app already built — no Node, Rust, or building required.
@@ -12,18 +30,18 @@ A prebuilt macOS app is published on the [Releases page](https://github.com/spam
 2. **Right-click `setup.command` → Open** (just the first time — it installs Python and Claude, may ask for your Mac password). When it's done, type `claude` to sign in, then `exit`.
 3. From then on, double-click **`start.command`**. The app window opens on its own; keep the small black window open while you fly, and quit the app to stop.
 
-`READ ME FIRST.txt` in the zip has the same steps plus troubleshooting. You still need **X-Plane 12**, a **Claude** subscription, and a free **ElevenLabs** key (paste it in the app's Settings).
+`READ ME FIRST.txt` in the zip has the same steps plus troubleshooting. You still need everything under [What you need](#what-you-need) above — a Claude subscription and an ElevenLabs key (with the permissions listed there), which you paste into the app's Settings.
 
 ## Build it yourself (Mac — from source)
 
-Prefer to run from source, or on another platform? You'll need: a Mac, **X-Plane 12** installed, a **Claude** subscription ([claude.ai](https://claude.ai)), and a free **ElevenLabs** account ([elevenlabs.io](https://elevenlabs.io)) for the controller's voice.
+Prefer to run from source, or on another platform? Same requirements as [What you need](#what-you-need) above — a **Claude subscription** and an **ElevenLabs API key** with the listed permissions.
 
 **Install it once:**
 
 1. **Download the app.** At the top of [this page](https://github.com/spamsch/xplane-virtual-atc), click the green **Code** button → **Download ZIP**. Double-click the downloaded ZIP to unpack it, and open the new folder.
 2. **Double-click `setup.command`.** If macOS says it's *"from an unidentified developer,"* **right-click** (or Control-click) the file → **Open** → **Open**. A black window opens and installs everything — it may ask for your Mac password and take a few minutes. Wait until it says **"App ready."**
 3. **Sign in to Claude.** In that same black window, type `claude` and press Return, follow the sign-in that opens in your browser, then type `exit` and press Return.
-4. **Get your ElevenLabs key.** Go to [elevenlabs.io](https://elevenlabs.io), sign in, open your profile menu → **API Keys** → **Create**, and copy the key.
+4. **Get your ElevenLabs key.** Go to [elevenlabs.io/app/developers/api-keys](https://elevenlabs.io/app/developers/api-keys), sign in, click **Create API key**, and grant it **Text to Speech**, **Speech to Text**, and **User: read** (or leave it unrestricted) — see [What you need](#what-you-need). Copy the key.
 
 **Each time you want to fly:**
 
