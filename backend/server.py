@@ -627,6 +627,20 @@ async def _set_airport(airport: Airport, scenario: Optional[Scenario] = None):
         await _broadcast("loading", active=False, label="")
 
 
+async def _await_live_weather(timeout: float = 12.0, poll: float = 0.5):
+    """Wait until X-Plane's weather has actually been read (QNH > 0) before the
+    boundary check runs. The flight datarefs can resolve a few seconds after a
+    flight loads, and the boundary check picks the active runway from wind/QNH —
+    so running it too early gives a wind-blind runway choice. Returns the latest
+    FlightState (weather may still be default if X-Plane never supplies it)."""
+    deadline = time.monotonic() + timeout
+    wx = _driver.state if _driver else None
+    while not (wx and wx.qnh_hpa > 0) and time.monotonic() < deadline:
+        await asyncio.sleep(poll)
+        wx = _driver.state if _driver else None
+    return wx
+
+
 async def _set_airport_inner(airport: Airport, scenario: Optional[Scenario] = None):
     global _current_airport, _session
 
@@ -647,8 +661,17 @@ async def _set_airport_inner(airport: Airport, scenario: Optional[Scenario] = No
             }
         }
     else:
-        # Live X-Plane mode — seed conditions from current flight state
-        wx = _driver.state if _driver else None
+        # Live X-Plane mode — seed conditions from current flight state. Wait for
+        # the weather datarefs to be read first (they can lag the position read),
+        # so the boundary check below sees real wind/QNH, not defaults.
+        if _source == "xplane":
+            await _broadcast("loading", active=True,
+                             label=f"Reading live weather at {airport.icao}…")
+            wx = await _await_live_weather()
+            if not (wx and wx.qnh_hpa > 0):
+                log.warning("Live weather unavailable after wait — boundary check uses defaults")
+        else:
+            wx = _driver.state if _driver else None
         session_conditions = {
             airport.icao: {
                 'qnh':           wx.qnh_hpa  if wx and wx.qnh_hpa  > 0 else 1013,
