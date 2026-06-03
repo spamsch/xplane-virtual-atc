@@ -198,6 +198,7 @@ class XPlaneRestConnector:
         self._logged_flight: bool = False    # have we logged the first valid state?
         self._last_acf: str = ''             # track aircraft identity changes
         self._ptt_retry_at: float = 0.0      # monotonic time for next PTT re-discovery
+        self._discover_retry_at: float = 0.0 # monotonic time for next dataref re-discovery
 
     # ------------------------------------------------------------------ #
     # FlightDataSource protocol
@@ -305,29 +306,38 @@ class XPlaneRestConnector:
             return
         time.sleep(PROBE_INTERVAL)
 
-    def _discover(self) -> None:
-        """Look up the numeric session ID for every needed dataref."""
-        found = 0
-        missing = []
-        for name in _DATAREFS:
-            try:
-                data = _http_get(f'{self._base}/api/v3/datarefs?filter[name]={name}')
-                for ref in _extract_datarefs(data):
-                    if ref.get('name') == name:
-                        ref_id = ref['id']
-                        self._ids[name] = ref_id
-                        log.debug(f"  dataref {name} → id {ref_id} ({ref.get('value_type', '?')})")
-                        found += 1
-                        break
-                else:
-                    missing.append(name)
-            except Exception as exc:
-                log.debug(f"Discovery failed for {name}: {exc}")
-                missing.append(name)
+    def _resolve_dataref(self, name: str) -> bool:
+        """Resolve one dataref name to its numeric session id (cached in _ids).
+        Returns True if found."""
+        try:
+            data = _http_get(f'{self._base}/api/v3/datarefs?filter[name]={name}')
+            for ref in _extract_datarefs(data):
+                if ref.get('name') == name:
+                    self._ids[name] = ref['id']
+                    log.debug(f"  dataref {name} → id {ref['id']} ({ref.get('value_type', '?')})")
+                    return True
+        except Exception as exc:
+            log.debug(f"Discovery failed for {name}: {exc}")
+        return False
 
+    def _discover(self) -> None:
+        """Look up the numeric session ID for every needed dataref.
+
+        X-Plane exposes the REST API before the flight-model datarefs are
+        registered — at the main menu, before a flight loads, a first pass can
+        resolve nothing (0/18). That's expected; _poll() keeps retrying the
+        missing ones via _retry_dataref_discovery() until the flight loads, so
+        position (and therefore airport detection) recovers on its own."""
+        for name in _DATAREFS:
+            self._resolve_dataref(name)
+        found   = sum(1 for n in _DATAREFS if n in self._ids)
+        missing = [n for n in _DATAREFS if n not in self._ids]
         log.info(f"Dataref discovery: {found}/{len(_DATAREFS)} resolved")
         if missing:
-            log.warning(f"  not found: {', '.join(missing)}")
+            log.info(
+                f"  {len(missing)} not registered yet (X-Plane may be at the menu, "
+                f"no flight loaded) — retrying every 5 s until they appear"
+            )
 
         # PTT dataref (optional; may include array index like "...[32]")
         if self._ptt_dataref:
@@ -401,9 +411,29 @@ class XPlaneRestConnector:
         except Exception as exc:
             log.debug(f"PTT re-discovery error: {exc}")
 
+    def _retry_dataref_discovery(self) -> None:
+        """Re-resolve flight datarefs that weren't registered at connect time —
+        discovery often runs while X-Plane is still at the menu, before a flight
+        loads, so the first pass resolves nothing. Throttled to every 5 s."""
+        missing = [n for n in _DATAREFS if n not in self._ids]
+        if not missing:
+            return
+        now = time.monotonic()
+        if now < self._discover_retry_at:
+            return
+        self._discover_retry_at = now + 5.0
+        newly = sum(1 for n in missing if self._resolve_dataref(n))
+        if newly:
+            have = sum(1 for n in _DATAREFS if n in self._ids)
+            log.info(
+                f"Dataref discovery (late): resolved {newly} more "
+                f"— {have}/{len(_DATAREFS)} now available"
+            )
+
     def _poll(self) -> None:
         """Fetch all cached datarefs and update FlightState atomically."""
         self._retry_ptt_discovery()
+        self._retry_dataref_discovery()
 
         with self._lock:
             old = copy.deepcopy(self._state)

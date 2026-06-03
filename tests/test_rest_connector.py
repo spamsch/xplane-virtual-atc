@@ -169,6 +169,35 @@ class TestConnectorProbeAndDiscover:
         c._discover()
         assert "sim/flightmodel/position/latitude" not in c._ids
 
+    @patch('xplane.rest_connector.urlopen')
+    def test_discover_empty_then_retry_resolves(self, mock_open):
+        # Discovery at the menu resolves nothing (0/18); once the flight loads,
+        # _retry_dataref_discovery must pick the datarefs up. This is the bug:
+        # without the retry, position stays 0 and airport detection is wrong.
+        lat = "sim/flightmodel/position/latitude"
+        mock_open.return_value = _response({"data": []})   # nothing registered yet
+        c = self._make_connector()
+        c._discover()
+        assert c._ids == {}
+
+        # Flight loads: the same query now returns ids. Retry (timer is 0 → fires).
+        mock_open.return_value = _response({
+            "data": [{"id": 7, "name": lat, "value_type": "double"}]
+        })
+        c._retry_dataref_discovery()
+        assert c._ids.get(lat) == 7
+
+    @patch('xplane.rest_connector.urlopen')
+    def test_retry_dataref_discovery_throttled(self, mock_open):
+        # A second call before the 5 s window must not re-query.
+        mock_open.return_value = _response({"data": []})
+        c = self._make_connector()
+        c._discover()
+        c._retry_dataref_discovery()           # fires (timer was 0), sets next window
+        mock_open.reset_mock()
+        c._retry_dataref_discovery()           # within window → no HTTP
+        mock_open.assert_not_called()
+
 
 # ------------------------------------------------------------------ #
 # Poll → FlightState
