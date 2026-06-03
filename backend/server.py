@@ -62,6 +62,52 @@ from xplane.simulator import ScenarioSimulator, Scenario
 
 log = logging.getLogger(__name__)
 
+VERSION = "0.1.0"
+HOST    = "localhost"
+PORT    = 8765
+
+
+def _startup_banner() -> None:
+    """Print an avionics-style boxed banner. Colors only on a real TTY so
+    piped logs (journald, files) stay clean."""
+    tty = sys.stdout.isatty()
+
+    def paint(code: str, s: str) -> str:
+        return f"\033[{code}m{s}\033[0m" if tty else s
+
+    cyan  = lambda s: paint("38;5;44", s)
+    mint  = lambda s: paint("38;5;48", s)
+    amber = lambda s: paint("38;5;179", s)
+    dim   = lambda s: paint("2", s)
+
+    w = 46  # inner width between the side margins
+
+    def row(plain: str, colored: str) -> str:
+        pad = " " * (w - len(plain))
+        return cyan("  │") + " " + colored + pad + " " + cyan("│")
+
+    top   = cyan("  ┌" + "─" * (w + 2) + "┐")
+    bot   = cyan("  └" + "─" * (w + 2) + "┘")
+    blank = row("", "")
+    hero  = row(
+        "((o))   X-PLANE · VIRTUAL ATC",
+        mint("((o))") + "   " + cyan("X-PLANE") + dim(" · ") + cyan("VIRTUAL ATC"),
+    )
+    sub   = row(
+        "VFR ground · tower · approach control",
+        dim("VFR ground · tower · approach control"),
+    )
+
+    lines = [
+        "",
+        top, blank, hero, sub, blank, bot,
+        "    " + dim("listening") + "   " + amber(f"ws://{HOST}:{PORT}"),
+        "    " + dim("version")   + "     " + f"{VERSION}",
+        "",
+    ]
+    print("\n".join(lines), flush=True)
+
+
 # ── Optional audio modules (require pip install -r requirements-audio.txt) ───
 
 _AUDIO_READY = False
@@ -889,6 +935,8 @@ async def run():
     _tx_lock    = asyncio.Lock()
     _loop       = asyncio.get_running_loop()   # for thread-safe scheduling from connector callbacks
 
+    _startup_banner()
+
     logging.basicConfig(level=logging.INFO,
                         format="%(levelname)s %(name)s: %(message)s")
 
@@ -910,8 +958,8 @@ async def run():
     # Scenarios can still be loaded manually via the UI's scenario drawer.
     _driver = ScenarioSimulator()
 
-    log.info("Backend listening on ws://localhost:8765")
-    async with websockets.serve(_client_handler, "localhost", 8765):
+    log.info(f"Backend listening on ws://{HOST}:{PORT}")
+    async with websockets.serve(_client_handler, HOST, PORT):
         await asyncio.gather(
             _state_poll_loop(),
             _heartbeat_loop(),

@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0e2030"/>
+      <stop offset="1" stop-color="#05101a"/>
+    </linearGradient>
+    <radialGradient id="scopeGlow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#0a2233"/>
+      <stop offset="1" stop-color="#040d15"/>
+    </radialGradient>
+    <linearGradient id="sweep" gradientUnits="userSpaceOnUse"
+                    x1="512" y1="512" x2="880" y2="320">
+      <stop offset="0" stop-color="#22e8a6" stop-opacity="0"/>
+      <stop offset="1" stop-color="#22e8a6" stop-opacity="0.48"/>
+    </linearGradient>
+    <filter id="soft" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="8"/>
+    </filter>
+    <filter id="blipGlow" x="-120%" y="-120%" width="340%" height="340%">
+      <feGaussianBlur stdDeviation="14"/>
+    </filter>
+  </defs>
+
+  <!-- App tile -->
+  <rect x="72" y="72" width="880" height="880" rx="196" fill="url(#bg)"/>
+  <rect x="72.5" y="72.5" width="879" height="879" rx="195.5"
+        fill="none" stroke="#2fc6ff" stroke-opacity="0.18" stroke-width="2"/>
+
+  <!-- Scope face -->
+  <circle cx="512" cy="512" r="372" fill="url(#scopeGlow)"/>
+
+  <!-- Range rings -->
+  <g fill="none" stroke="#2fc6ff" stroke-width="6">
+    <circle cx="512" cy="512" r="372" stroke-opacity="0.65"/>
+    <circle cx="512" cy="512" r="280" stroke-opacity="0.42"/>
+    <circle cx="512" cy="512" r="188" stroke-opacity="0.42"/>
+    <circle cx="512" cy="512" r="96"  stroke-opacity="0.42"/>
+  </g>
+
+  <!-- Crosshair -->
+  <g stroke="#2fc6ff" stroke-opacity="0.30" stroke-width="5">
+    <line x1="140" y1="512" x2="884" y2="512"/>
+    <line x1="512" y1="140" x2="512" y2="884"/>
+  </g>
+
+  <!-- Bearing ticks at the cardinal points -->
+  <g stroke="#2fc6ff" stroke-opacity="0.5" stroke-width="6" stroke-linecap="round">
+    <line x1="512" y1="148" x2="512" y2="184"/>
+    <line x1="512" y1="840" x2="512" y2="876"/>
+    <line x1="148" y1="512" x2="184" y2="512"/>
+    <line x1="840" y1="512" x2="876" y2="512"/>
+  </g>
+
+  <!-- Radar sweep wedge -->
+  <path d="M512 512 L884 512 A372 372 0 0 0 707 198 Z" fill="url(#sweep)"/>
+  <!-- Leading edge of the sweep -->
+  <line x1="512" y1="512" x2="884" y2="512" stroke="#2ef0ad" stroke-width="6"
+        stroke-linecap="round" filter="url(#soft)" opacity="0.9"/>
+  <line x1="512" y1="512" x2="884" y2="512" stroke="#7afdd0" stroke-width="3"
+        stroke-linecap="round"/>
+
+  <!-- Aircraft target (chevron) + blip glow, sitting on a ring inside the sweep -->
+  <circle cx="612" cy="406" r="58" fill="#ffb000" opacity="0.55" filter="url(#blipGlow)"/>
+  <g transform="translate(612 406) rotate(35)">
+    <path d="M0 -34 L26 28 L0 12 L-26 28 Z" fill="#ffc83d"/>
+  </g>
+</svg>
