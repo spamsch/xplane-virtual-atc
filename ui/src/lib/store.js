@@ -24,6 +24,8 @@ export const thinking = writable(false);
 
 // UI
 export const scenarioDrawerOpen = writable(false);
+export const loading      = writable(false);   // backend is setting up a session (boundary check)
+export const loadingLabel = writable('');       // human-readable loading message
 
 // Audio
 export const pttActive       = writable(false);   // mic is recording

@@ -6,12 +6,15 @@
   import RadioPane from '$lib/RadioPane.svelte';
   import AirportPanel from '$lib/AirportPanel.svelte';
   import ScenarioDrawer from '$lib/ScenarioDrawer.svelte';
-  import { scenarioDrawerOpen, wsStatus } from '$lib/store.js';
+  import { scenarioDrawerOpen, wsStatus, xplaneConnected, airport, loading, loadingLabel } from '$lib/store.js';
 
   onMount(() => initWs());
   onDestroy(() => closeWs());
 
   $: offline = $wsStatus !== 'connected';
+  // Idle: backend up, nothing loading, no flight/airport yet.
+  $: idle = !offline && !$loading && !$airport;
+  function openScenario() { scenarioDrawerOpen.set(true); }
 </script>
 
 <svelte:head>
@@ -27,9 +30,25 @@
       Backend offline — start <code>python3 backend/server.py</code>
       <span class="offline-retry">Retrying…</span>
     </div>
+  {:else if $loading}
+    <div class="loading-banner">
+      <span class="spinner"></span>
+      {$loadingLabel || 'Loading…'}
+    </div>
+  {:else if idle}
+    <div class="idle-banner">
+      {#if $xplaneConnected}
+        <span class="idle-icon">🛬</span>
+        <span>X-Plane connected — waiting for you to load a flight. The controller wakes up once you're near an airport.</span>
+      {:else}
+        <span class="idle-icon">🛩</span>
+        <span>No X-Plane connection. Start a flight in X-Plane and it'll connect automatically — or
+          <button class="link-btn" onclick={openScenario}>load a scenario</button> to begin right now.</span>
+      {/if}
+    </div>
   {/if}
 
-  <div class="workspace" class:dimmed={offline}>
+  <div class="workspace" class:dimmed={offline || $loading}>
     <AircraftPanel />
     <RadioPane />
     <AirportPanel />
@@ -125,4 +144,38 @@
     animation: blink 1.5s ease-in-out infinite;
   }
   @keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+  /* Loading (boundary check running) */
+  .loading-banner {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 16px;
+    background: rgba(210, 153, 34, 0.12);
+    border-bottom: 1px solid rgba(210, 153, 34, 0.35);
+    color: var(--accent-amber);
+    font-size: 12px; flex-shrink: 0;
+  }
+  .spinner {
+    width: 13px; height: 13px; flex-shrink: 0;
+    border: 2px solid rgba(210,153,34,0.3);
+    border-top-color: var(--accent-amber);
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Idle hint (no flight loaded) */
+  .idle-banner {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 16px;
+    background: rgba(88, 166, 255, 0.10);
+    border-bottom: 1px solid rgba(88, 166, 255, 0.30);
+    color: var(--text); font-size: 12px; flex-shrink: 0;
+  }
+  .idle-icon { font-size: 14px; }
+  .link-btn {
+    background: none; border: none; padding: 0;
+    color: var(--accent-blue); font: inherit;
+    text-decoration: underline; cursor: pointer;
+  }
+  .link-btn:hover { opacity: 0.8; }
 </style>

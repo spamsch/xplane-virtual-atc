@@ -553,6 +553,19 @@ async def _set_source(source: str):
 async def _set_airport(airport: Airport, scenario: Optional[Scenario] = None):
     global _current_airport, _session
 
+    # The Opus boundary check below takes several seconds. Tell the UI we're
+    # loading so it doesn't look ready (and isn't usable) until the session exists.
+    await _broadcast("loading", active=True,
+                     label=f"Setting up {airport.icao} {airport.name} — running ATC boundary check…")
+    try:
+        await _set_airport_inner(airport, scenario)
+    finally:
+        await _broadcast("loading", active=False, label="")
+
+
+async def _set_airport_inner(airport: Airport, scenario: Optional[Scenario] = None):
+    global _current_airport, _session
+
     _current_airport = airport
     await _broadcast("airport_detected", **_airport_dict(airport))
 

@@ -6,7 +6,7 @@
 import {
   wsStatus, backendUptime, source, scenarioName, xplaneConnected,
   flightState, airport, activeRunway, atcCallsign, boundaryNotes,
-  messages, phase, station, thinking,
+  messages, phase, station, thinking, loading, loadingLabel,
   pttActive, transcription, audioEnabled,
 } from './store.js';
 import { playMicClick } from './sound.js';
@@ -160,6 +160,11 @@ function dispatch(msg) {
 
     case 'xplane_status':
       xplaneConnected.set(msg.connected);
+      break;
+
+    case 'loading':
+      loading.set(msg.active);
+      loadingLabel.set(msg.label ?? '');
       break;
 
     case 'state_update':
