@@ -138,6 +138,10 @@ Rules:
 - Use standard ICAO phraseology.
 - Address the pilot by their callsign on every transmission.
 - Keep it concise. One clearance per transmission.
+- For taxi clearances, use ONLY taxiways and holding points given to you in the
+  instructions below. Never invent, guess, or substitute taxiway letters or
+  holding-point names. If none are provided, keep the taxi instruction generic
+  (e.g. "taxi to the holding point for runway 27, follow the green centreline").
 - If the request is outside your authority (e.g. pilot asks tower questions to
   ground), redirect them politely to the correct frequency.{extra_block}"""
 

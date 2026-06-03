@@ -313,15 +313,18 @@ async def _process_transmission_locked(text: str):
             return
 
         # Pass live COM1 (X-Plane only) so a handed-off station won't answer
-        # until the pilot has actually tuned to its frequency.
-        com1 = None
-        if _source == "xplane" and _driver is not None:
+        # until the pilot has actually tuned to its frequency. Position (any
+        # source) lets the session compute a real taxi route on the ground.
+        com1 = lat = lon = None
+        if _driver is not None:
             st = _driver.state
             if st.is_flight_loaded:
-                com1 = st.com1_mhz
+                lat, lon = st.lat, st.lon
+                if _source == "xplane":
+                    com1 = st.com1_mhz
 
         # session.process() is blocking (calls claude subprocess)
-        r = await asyncio.to_thread(_session.process, text, com1)
+        r = await asyncio.to_thread(_session.process, text, com1, lat, lon)
 
         # Pilot called a station they haven't tuned to — no reply, just a nudge.
         if r.on_wrong_frequency:

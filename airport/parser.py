@@ -5,6 +5,11 @@ Relevant row codes:
   1   / 16 / 17 — airport / seaplane base / heliport header
   100           — land runway
   50–56         — frequencies (ATIS, CTAF, Clearance, Ground, Tower, Approach, Departure)
+  1201          — taxi-route network node (lat lon usage id)
+  1202          — taxi-route network edge (n1 n2 oneway|twoway taxiway_<name>|runway)
+  1204          — active zone for the preceding 1202 edge (departure|arrival <rwys>),
+                  used to locate runway hold-short points
+  1300          — ramp start: gate / tie-down / parking (lat lon hdg type cats name)
   99            — end of file
 
 Frequency field is in units of 10 kHz:
@@ -56,6 +61,32 @@ class Runway:
 
 
 @dataclass
+class TaxiNode:
+    id: int
+    lat: float
+    lon: float
+
+
+@dataclass
+class TaxiEdge:
+    node1: int
+    node2: int
+    oneway: bool
+    name: str                       # taxiway designator, e.g. "A" (empty for runway edges)
+    is_runway: bool
+    active_zone: Optional[str] = None   # "09L,27R" if a 1204 follows → a runway hold/cross
+
+
+@dataclass
+class RampStart:
+    lat: float
+    lon: float
+    heading: float
+    kind: str                       # gate | tie_down | hangar | misc
+    name: str                       # e.g. "12", "27B", "helicopter base"
+
+
+@dataclass
 class Airport:
     icao: str
     name: str
@@ -64,6 +95,12 @@ class Airport:
     lon: float
     frequencies: List[Frequency] = field(default_factory=list)
     runways: List[Runway] = field(default_factory=list)
+    taxi_nodes: Dict[int, TaxiNode] = field(default_factory=dict)
+    taxi_edges: List[TaxiEdge] = field(default_factory=list)
+    ramp_starts: List[RampStart] = field(default_factory=list)
+
+    def has_taxi_network(self) -> bool:
+        return bool(self.taxi_nodes and self.taxi_edges)
 
     def freq(self, type_code: int) -> Optional[Frequency]:
         for f in self.frequencies:
@@ -102,7 +139,9 @@ def _parse_freq_mhz(s: str) -> float:
 
 def parse_apt_dat(path: Path, cache_path: Optional[Path] = None) -> Dict[str, Airport]:
     if cache_path is None:
-        cache_path = path.with_suffix('.vatc_cache.pkl')
+        # Bumped to v2 when taxi network + ramp starts were added — the v1 pickle
+        # lacks those fields, so a new filename forces a one-time re-parse.
+        cache_path = path.with_suffix('.vatc_cache_v2.pkl')
 
     if cache_path.exists() and cache_path.stat().st_mtime >= path.stat().st_mtime:
         log.info(f"Loading apt.dat cache: {cache_path.name}")
@@ -165,6 +204,44 @@ def parse_apt_dat(path: Path, cache_path: Optional[Path] = None) -> Dict[str, Ai
                     if current.lat == 0.0 and current.lon == 0.0:
                         current.lat = (lat1 + lat2) / 2
                         current.lon = (lon1 + lon2) / 2
+                except (ValueError, IndexError):
+                    pass
+                continue
+
+            # Taxi-route network node
+            if code == '1201' and len(parts) >= 5:
+                try:
+                    nid = int(parts[4])
+                    current.taxi_nodes[nid] = TaxiNode(
+                        id=nid, lat=float(parts[1]), lon=float(parts[2]))
+                except (ValueError, IndexError):
+                    pass
+                continue
+
+            # Taxi-route network edge
+            if code == '1202' and len(parts) >= 5:
+                try:
+                    cat, _, nm = parts[4].partition('_')   # "taxiway_A" → ("taxiway","_","A")
+                    current.taxi_edges.append(TaxiEdge(
+                        node1=int(parts[1]), node2=int(parts[2]),
+                        oneway=(parts[3] == 'oneway'),
+                        name=nm, is_runway=(cat == 'runway')))
+                except (ValueError, IndexError):
+                    pass
+                continue
+
+            # Active zone — applies to the edge just above it (runway hold/cross)
+            if code == '1204' and len(parts) >= 3 and current.taxi_edges:
+                current.taxi_edges[-1].active_zone = parts[2]
+                continue
+
+            # Ramp start — gate / tie-down / parking position
+            if code == '1300' and len(parts) >= 6:
+                try:
+                    current.ramp_starts.append(RampStart(
+                        lat=float(parts[1]), lon=float(parts[2]),
+                        heading=float(parts[3]), kind=parts[4],
+                        name=' '.join(parts[6:]) if len(parts) > 6 else ''))
                 except (ValueError, IndexError):
                     pass
                 continue

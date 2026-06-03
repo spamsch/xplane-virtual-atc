@@ -41,7 +41,9 @@ The system has three layers that compose cleanly: a **data source**, an **ATC se
 
 ### Airport data
 
-`airport/parser.py` streams and parses X-Plane's `apt.dat` (~500 MB) on first run and writes a pickle cache next to the file. `airport/database.py` wraps the parsed data with a 1°×1° spatial grid for O(1) candidate selection and haversine distance ranking. APT.DAT path discovery logic lives in `airport/parser.py`.
+`airport/parser.py` streams and parses X-Plane's `apt.dat` (~500 MB) on first run and writes a pickle cache next to the file. It extracts runways (`100`), frequencies (`50–56`), the taxi-route network (`1201` nodes / `1202` edges / `1204` runway active zones), and ramp starts (`1300`). `airport/database.py` wraps the parsed data with a 1°×1° spatial grid for O(1) candidate selection and haversine distance ranking. APT.DAT path discovery logic lives in `airport/parser.py`.
+
+`airport/taxi.py` computes real ground taxi routes — it snaps the aircraft's position onto the taxi network and runs Dijkstra to the nearest hold-short point for the active runway (found via `1204` zones), returning the actual taxiway designators. `ATCSession` hands this computed route to the LLM (in `_taxi_instruction`) with a hard rule to relay it verbatim, so the controller never invents taxiways or holding points. apt.dat has no AIP holding-point names, so holds are described by runway ("hold short of runway 27R").
 
 ### ATC engine
 

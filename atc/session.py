@@ -20,6 +20,7 @@ log = logging.getLogger(__name__)
 
 import config
 from airport.parser import Airport
+from airport import taxi
 from aircraft.database import AircraftPerf
 from atc import engine as atc_engine
 from atc.parser import parse as parse_radio_call
@@ -232,7 +233,9 @@ class ATCSession:
     # Public interface
 
     def process(self, pilot_message: str,
-                com1_mhz: Optional[float] = None) -> ATCResponse:
+                com1_mhz: Optional[float] = None,
+                lat: Optional[float] = None,
+                lon: Optional[float] = None) -> ATCResponse:
         """Generate the ATC reply to a pilot transmission.
 
         com1_mhz: the aircraft's live COM1 frequency, if known. When provided,
@@ -240,6 +243,10 @@ class ATCSession:
         COM1 is actually tuned to its frequency — otherwise an on_wrong_frequency
         response is returned and no LLM call is made. When None (CLI / tests),
         handoffs take effect immediately, as before.
+
+        lat/lon: the aircraft's live position. When known on the ground, a real
+        taxi route is computed from the airport's apt.dat taxi network and handed
+        to the controller, so it never invents taxiways or holding points.
         """
         call = parse_radio_call(pilot_message)
 
@@ -283,14 +290,7 @@ class ATCSession:
                 "the airport's frequency list)."
             )
         if self.current_station == Station.GND:
-            active_rwy = self._flat_conditions().get('active_runway', 'unknown')
-            stand      = self._flat_conditions().get('stand', '')
-            stand_note = f" Aircraft is at stand/gate {stand}." if stand else ""
-            extra_parts.append(
-                f"Use {self.current_airport.icao}'s real taxiway designators, "
-                f"holding-point names, and apron layout in any taxi clearance.{stand_note} "
-                f"Active runway: {active_rwy}."
-            )
+            extra_parts.append(self._taxi_instruction(lat, lon))
 
         # Model: Opus for first call on each new station, Sonnet thereafter
         first_call_on_station = self.current_station not in self._stations_seen
@@ -434,6 +434,39 @@ class ATCSession:
         city = self.current_airport.name.split()[0]
         label = _STATION_LABELS.get(self.current_station, 'Radio')
         return f"{city} {label}"
+
+    def _taxi_instruction(self, lat: Optional[float], lon: Optional[float]) -> str:
+        """Ground taxi guidance for the LLM. With position + active runway + a
+        taxi network, compute the real route and tell the controller to relay it
+        verbatim. Otherwise, explicitly forbid inventing taxiways/holding points."""
+        icao = self.current_airport.icao
+        active_rwy = self._flat_conditions().get('active_runway', 'unknown')
+        route = None
+        if (lat is not None and lon is not None
+                and active_rwy not in ('', 'unknown', None)):
+            try:
+                route = taxi.compute_route(self.current_airport, lat, lon, active_rwy)
+            except Exception:
+                route = None
+
+        if route and route.taxiways:
+            stand = f"stand {route.stand}" if route.stand else "the apron"
+            return (
+                f"TAXI ROUTE for {icao} (computed from the sim's taxi network — relay it "
+                f"EXACTLY; do NOT invent, add, or substitute taxiways or holding points): "
+                f"from {stand}, {route.describe()}. The ONLY valid taxiways for this "
+                f"clearance are: {', '.join(route.taxiways)}. Active runway {active_rwy}."
+            )
+
+        # No computed route — make sure the controller does not fabricate one.
+        stand = (route.stand if route else None) or self._flat_conditions().get('stand', '')
+        stand_note = f" Aircraft is parked at stand {stand}." if stand else ""
+        return (
+            f"No published taxi route is available for {icao}. Give a SIMPLE, generic taxi "
+            f"instruction (e.g. \"taxi to the holding point for runway {active_rwy}, follow "
+            f"the green centreline\") and do NOT invent specific taxiway letters or "
+            f"holding-point names.{stand_note} Active runway: {active_rwy}."
+        )
 
     def _flat_conditions(self) -> dict:
         """Convert per-airport conditions dict to the flat format engine.respond() expects."""
