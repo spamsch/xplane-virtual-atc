@@ -78,6 +78,8 @@ MODEL_BOUNDARY = "claude-opus-4-8"     # first call, complex clearances, context
 AUDIO_ENABLED = os.environ.get("AUDIO_ENABLED", "true").lower() == "true"
 
 # STT — faster-whisper model name or HuggingFace CTranslate2 model ID.
+# Only used when offline STT is opted into (STT_BACKEND=local); 'auto' never
+# selects local, so this model is not downloaded unless you ask for it.
 # Standard sizes (tiny/base/small/medium/large-v3 etc.) are downloaded
 # automatically from Systran's HuggingFace org in CTranslate2 format.
 #
@@ -90,9 +92,10 @@ AUDIO_ENABLED = os.environ.get("AUDIO_ENABLED", "true").lower() == "true"
 # Then set: STT_MODEL=~/.cache/xplane-vatc/whisper-atc-ct2
 STT_MODEL = os.environ.get("STT_MODEL", "large-v3")
 
-# TTS — backend: 'auto' | 'piper' | 'say'
-# 'auto' uses piper if installed, else macOS say
-TTS_BACKEND = os.environ.get("TTS_BACKEND", "auto")   # auto | openai | kokoro | piper | say
+# TTS backend. 'auto' picks a cloud provider only: ElevenLabs → OpenAI → macOS
+# `say`. Local backends (kokoro, piper) are opt-in — set TTS_BACKEND explicitly
+# so an unconfigured server never downloads a voice model.
+TTS_BACKEND = os.environ.get("TTS_BACKEND", "auto")   # auto | elevenlabs | openai | kokoro | piper | say
 # Voice name — meaning depends on backend:
 #   openai:  onyx (deep male), echo, alloy, fable, nova, shimmer
 #   kokoro:  am_adam, am_michael, am_echo (male); af_sarah, af_nicole (female)

@@ -1,12 +1,14 @@
 """
 STT transcription.
 
-Backends (auto-selected at startup):
-  openai — OpenAI Whisper API; needs OPENAI_API_KEY; no local model download
-  local  — faster-whisper (large-v3); ~3 GB download on first use
+Backends:
+  elevenlabs — ElevenLabs Scribe; needs ELEVENLABS_API_KEY; no local download
+  openai     — OpenAI Whisper API; needs OPENAI_API_KEY; no local download
+  local      — faster-whisper (large-v3); ~3 GB download. Opt-in only.
 
-'auto' uses OpenAI if OPENAI_API_KEY is set, otherwise local.
-STT_BACKEND env var overrides.
+'auto' picks a cloud backend (ElevenLabs, then OpenAI) and never falls back to
+the local model. Offline Whisper is opt-in: set STT_BACKEND=local explicitly.
+That way an unconfigured server never downloads a multi-GB model.
 
 Public API:
   preload()                              — call once at server startup
@@ -47,12 +49,18 @@ _model = None   # faster_whisper.WhisperModel, only loaded when using local back
 # ─────────────────────────── backend selection ───────────────────────────────
 
 def _active_backend() -> str:
+    """Resolve the STT backend. 'auto' only ever picks a configured cloud
+    provider — local faster-whisper is opt-in (STT_BACKEND=local), so an
+    unconfigured server never downloads a model. Returns "none" when nothing
+    is configured."""
     explicit = os.environ.get("STT_BACKEND", "auto")
     if explicit != "auto":
         return explicit
     if config.ELEVENLABS_API_KEY:
         return "elevenlabs"
-    return "openai" if config.OPENAI_API_KEY else "local"
+    if config.OPENAI_API_KEY:
+        return "openai"
+    return "none"
 
 
 # ─────────────────────────── OpenAI backend ──────────────────────────────────
@@ -225,7 +233,10 @@ def _transcribe_local(audio_bytes: bytes, callsign: Optional[str]) -> str:
 # ─────────────────────────── public API ──────────────────────────────────────
 
 def preload():
-    """Call once at server startup. Verifies the cloud key or loads the local model."""
+    """Call once at server startup. Verifies the cloud key, or — only when the
+    user has explicitly set STT_BACKEND=local — loads the offline model. Never
+    downloads a local model just because no cloud key is set yet (the default is
+    ElevenLabs; the key arrives via the Settings view). Never raises."""
     backend = _active_backend()
     if backend == "elevenlabs":
         log.info("STT backend: ElevenLabs Scribe (no local model download needed)")
@@ -233,9 +244,18 @@ def preload():
     elif backend == "openai":
         log.info("STT backend: OpenAI (no local model download needed)")
         check_openai()
-    else:
-        log.info("STT backend: local faster-whisper")
-        _load_local_model()
+    elif backend == "local":
+        log.info("STT backend: local faster-whisper (STT_BACKEND=local)")
+        try:
+            _load_local_model()
+        except Exception as e:
+            log.warning(f"Local STT model unavailable: {e}")
+    else:  # "none"
+        log.info(
+            "STT not configured — no ElevenLabs or OpenAI key set. Add a key in "
+            "the app's Settings to enable voice input. (Offline STT is opt-in: "
+            "install faster-whisper and set STT_BACKEND=local.)"
+        )
 
 
 def transcribe(audio_bytes: bytes, *, callsign: Optional[str] = None) -> str:
@@ -256,4 +276,9 @@ def transcribe(audio_bytes: bytes, *, callsign: Optional[str] = None) -> str:
         return _transcribe_elevenlabs(audio_bytes, callsign).strip()
     if backend == "openai":
         return _transcribe_openai(audio_bytes, callsign).strip()
-    return _transcribe_local(audio_bytes, callsign)
+    if backend == "local":
+        return _transcribe_local(audio_bytes, callsign)
+    raise RuntimeError(
+        "No speech-to-text backend configured. Add an ElevenLabs key in Settings, "
+        "or set STT_BACKEND=local for offline Whisper."
+    )

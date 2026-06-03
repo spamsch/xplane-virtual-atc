@@ -171,30 +171,32 @@ class TestSynthesize:
         assert samples.dtype == np.float32
 
     @patch('audio.tts.config')
-    @patch('audio.tts._kokoro_available', return_value=False)
-    @patch('audio.tts._piper_available', return_value=True)
     @patch('audio.tts._backend_piper')
-    def test_auto_prefers_piper_over_say(self, mock_piper, _piper, _kokoro, mock_cfg):
+    @patch('audio.tts._backend_say')
+    def test_auto_never_selects_local(self, mock_say, mock_piper, mock_cfg):
+        # Even with local backends installed, 'auto' picks `say` — it must never
+        # auto-select kokoro/piper, so an unconfigured server downloads no model.
         mock_cfg.OPENAI_API_KEY = ''
         mock_cfg.ELEVENLABS_API_KEY = ''
         mock_cfg.TTS_BACKEND = 'auto'
-        mock_cfg.TTS_VOICE = 'en_US-lessac-high'
-        mock_piper.return_value = (np.zeros(100, dtype=np.float32), 22_050)
+        mock_cfg.TTS_VOICE = 'onyx'
+        mock_say.return_value = (np.zeros(100, dtype=np.float32), 22_050)
         from audio.tts import synthesize
         synthesize("test", backend='auto')
-        mock_piper.assert_called_once()
+        mock_say.assert_called_once()
+        mock_piper.assert_not_called()
 
     @patch('audio.tts.config')
-    @patch('audio.tts._kokoro_available', return_value=True)
     @patch('audio.tts._backend_kokoro')
-    def test_auto_prefers_kokoro_over_piper(self, mock_kokoro, _kokoro, mock_cfg):
+    def test_explicit_local_backend_used(self, mock_kokoro, mock_cfg):
+        # Opt-in: an explicit TTS_BACKEND still routes to the local backend.
         mock_cfg.OPENAI_API_KEY = ''
         mock_cfg.ELEVENLABS_API_KEY = ''
-        mock_cfg.TTS_BACKEND = 'auto'
+        mock_cfg.TTS_BACKEND = 'kokoro'
         mock_cfg.TTS_VOICE = 'am_adam'
         mock_kokoro.return_value = (np.zeros(100, dtype=np.float32), 24_000)
         from audio.tts import synthesize
-        synthesize("test", backend='auto')
+        synthesize("test", backend='kokoro')
         mock_kokoro.assert_called_once()
 
     @patch('audio.tts.config')

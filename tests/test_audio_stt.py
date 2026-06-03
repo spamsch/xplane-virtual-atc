@@ -198,15 +198,18 @@ class TestActiveBackend:
             assert _active_backend() == 'elevenlabs'
 
     @patch('audio.stt.config')
-    def test_local_when_no_key(self, mock_cfg):
+    def test_none_when_no_key(self, mock_cfg):
+        # 'auto' must never fall back to local — an unconfigured server should
+        # not download a multi-GB model. Resolves to "none" instead.
         mock_cfg.OPENAI_API_KEY = ''
         mock_cfg.ELEVENLABS_API_KEY = ''
         import os
         with patch.dict(os.environ, {'STT_BACKEND': 'auto'}):
             from audio.stt import _active_backend
-            assert _active_backend() == 'local'
+            assert _active_backend() == 'none'
 
     def test_explicit_override(self):
+        # Local is opt-in only, via an explicit STT_BACKEND=local.
         import os
         with patch.dict(os.environ, {'STT_BACKEND': 'local'}):
             from audio.stt import _active_backend

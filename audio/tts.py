@@ -302,7 +302,9 @@ def synthesize(
               piper:  'en_US-lessac-high', 'en_US-ryan-high' …
               say:    ignored
     backend : 'elevenlabs', 'openai', 'kokoro', 'piper', 'say', or 'auto'
-              auto order: elevenlabs → openai → kokoro → piper → say
+              auto order: elevenlabs → openai → say. Local backends (kokoro,
+              piper) are opt-in via TTS_BACKEND and never auto-selected, so an
+              unconfigured server downloads no model.
 
     Returns
     -------
@@ -316,11 +318,10 @@ def synthesize(
             resolved_backend = 'elevenlabs'
         elif config.OPENAI_API_KEY:
             resolved_backend = 'openai'
-        elif _kokoro_available():
-            resolved_backend = 'kokoro'
-        elif _piper_available():
-            resolved_backend = 'piper'
         else:
+            # Local backends (kokoro/piper) are opt-in via TTS_BACKEND — never
+            # auto-selected, so an unconfigured server downloads no model.
+            # macOS `say` is built-in and needs no download.
             resolved_backend = 'say'
 
     if resolved_backend == 'elevenlabs':
@@ -338,17 +339,15 @@ def synthesize(
 
 
 def active_backend() -> str:
-    """Resolve which backend 'auto' would pick (for startup logging/checks)."""
+    """Resolve which backend 'auto' would pick (for startup logging/checks).
+    Local backends (kokoro/piper) are opt-in via TTS_BACKEND and never chosen
+    automatically, so an unconfigured server downloads nothing."""
     if config.TTS_BACKEND != 'auto':
         return config.TTS_BACKEND
     if config.ELEVENLABS_API_KEY:
         return 'elevenlabs'
     if config.OPENAI_API_KEY:
         return 'openai'
-    if _kokoro_available():
-        return 'kokoro'
-    if _piper_available():
-        return 'piper'
     return 'say'
 
 

@@ -124,13 +124,15 @@ python3 main.py                              # requires X-Plane running
 
 ### Offline voice (optional)
 
-By default voice runs on ElevenLabs (cloud). For fully local STT/TTS — or the CLI's mic capture — install the extras:
+By default voice runs on ElevenLabs (cloud). For fully local STT/TTS — or the CLI's mic capture — install the extras **and opt in explicitly**:
 
 ```bash
 pip install -r requirements-local.txt        # faster-whisper, piper-tts, sounddevice
+export STT_BACKEND=local                      # offline Whisper (~1.6 GB on first use)
+export TTS_BACKEND=piper                       # offline Piper voices
 ```
 
-Providers are auto-selected: ElevenLabs (if `ELEVENLABS_API_KEY` is set) → OpenAI (if `OPENAI_API_KEY`) → local (Whisper / Piper / macOS `say`). See [Configuration](#configuration).
+`auto` only ever selects a cloud provider — ElevenLabs (if `ELEVENLABS_API_KEY` is set) → OpenAI (if `OPENAI_API_KEY`) → macOS `say` for TTS. It **never** downloads a local model on its own; offline Whisper/Piper/Kokoro are opt-in via `STT_BACKEND` / `TTS_BACKEND`. See [Configuration](#configuration).
 
 ### Tests
 
