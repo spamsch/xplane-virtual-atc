@@ -989,10 +989,75 @@ async def _set_vfr_weather():
             message=(f"VFR day set — {result['clouds']}, visibility "
                      f"{result['visibility_sm']} sm, local noon. "
                      f"Wind, pressure and temperature kept real."))
+        # The freeze re-downloaded real weather, which can nudge wind/QNH.
+        # Refresh the session's stored conditions (no LLM) and re-run the
+        # boundary check only if the wind veered enough to change the runway.
+        await _refresh_session_weather()
     except Exception as e:
         log.warning(f"VFR weather failed: {e}")
         await _broadcast("vfr_weather", ok=False, busy=False,
                          message=f"Could not set weather: {e}")
+
+
+def _angular_diff(a: float, b: float) -> float:
+    """Smallest angle (degrees) between two compass bearings."""
+    d = abs(a - b) % 360
+    return min(d, 360 - d)
+
+
+async def _refresh_session_weather():
+    """After the sim weather changes, update the active session's stored QNH/wind
+    from the live state (cheap, no LLM) so the controller reports current values.
+    Re-runs the Opus boundary check ONLY when the wind direction shifted enough
+    (>30°, non-calm) to plausibly change the active runway. Chat and phase are
+    left intact."""
+    if _session is None or _current_airport is None or _source != "xplane":
+        return
+    wx = _driver.state if _driver else None
+    if not (wx and wx.qnh_hpa > 0):
+        return
+    icao = _current_airport.icao
+    cond = _session.conditions.get(icao)
+    if not cond:
+        return
+
+    old_dir = cond.get('wind_dir', 0)
+    new_dir = int(wx.wind_dir_deg)
+    new_kts = int(wx.wind_speed_kts)
+    cond['qnh'] = wx.qnh_hpa
+    cond['wind_dir'] = new_dir
+    cond['wind_kts'] = new_kts
+    log.info(f"Session weather refreshed: QNH {wx.qnh_hpa}, wind {new_dir}°/{new_kts} kt")
+
+    if new_kts < 3 or _angular_diff(old_dir, new_dir) <= 30:
+        return   # wind essentially unchanged → keep the current runway
+
+    log.info(f"Wind veered {old_dir}°→{new_dir}° — re-running boundary check")
+    flat_cond = {
+        'wind': f"{new_dir}° / {new_kts} kt",
+        'qnh':  str(wx.qnh_hpa),
+        'vis':  '10 km',
+        'time': 'check simulator clock',
+    }
+    try:
+        ctx = await asyncio.to_thread(
+            atc_engine.boundary_check,
+            airport=_current_airport, acft=_current_acft,
+            callsign=_session.callsign, conditions=flat_cond,
+            model=config.MODEL_BOUNDARY)
+        new_runway = ctx.get('active_runway') or cond.get('active_runway', '')
+    except Exception as e:
+        log.warning(f"Re-run boundary check failed: {e}")
+        return
+
+    if new_runway and new_runway != cond.get('active_runway'):
+        cond['active_runway'] = new_runway
+        log.info(f"Active runway changed to {new_runway} after wind shift")
+        await _broadcast("phase_change",
+                         phase=_session.phase.value,
+                         station=_session.current_station.value,
+                         atc_callsign=_session._atc_callsign(),
+                         active_runway=new_runway, notes="")
 
 
 async def run():
