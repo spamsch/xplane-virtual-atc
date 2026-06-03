@@ -1,10 +1,33 @@
 # X-Plane Virtual ATC
 
-LLM-powered VFR air traffic control for [X-Plane 12](https://www.x-plane.com/). Fly the pattern, key the mic, and talk to a controller that actually understands what you said, clears you for the runway in use, hands you off between frequencies, and assigns a squawk — all driven by Claude, grounded in your live flight state and the real airport layout from X-Plane's `apt.dat`.
+**Talk to a real-sounding air traffic controller while you fly [X-Plane 12](https://www.x-plane.com/).** Hold a button, say what you'd say on the radio, and a controller — powered by Claude — answers in a proper radio voice: taxi clearances, the runway in use, frequency handoffs, squawk codes, the works. It reads your actual position, altitude, and radios from the sim, and knows the real layout of the airport you're at.
 
-It runs two ways: a desktop app (Tauri + Svelte) with push-to-talk and synthesized controller voice, or a plain terminal CLI.
+![X-Plane Virtual ATC](docs/screenshot.png)
 
-> **Status:** Departure and ground/tower phases are solid. En-route and arrival handling is partially implemented (some flows are marked `xfail` in the test suite). VFR only.
+## Quick start (Mac — no setup experience needed)
+
+You'll need: a Mac, **X-Plane 12** installed, a **Claude** subscription ([claude.ai](https://claude.ai)), and a free **ElevenLabs** account ([elevenlabs.io](https://elevenlabs.io)) for the controller's voice.
+
+**Install it once:**
+
+1. **Download the app.** At the top of [this page](https://github.com/spamsch/xplane-virtual-atc), click the green **Code** button → **Download ZIP**. Double-click the downloaded ZIP to unpack it, and open the new folder.
+2. **Double-click `setup.command`.** If macOS says it's *"from an unidentified developer,"* **right-click** (or Control-click) the file → **Open** → **Open**. A black window opens and installs everything — it may ask for your Mac password and take a few minutes. Wait until it says **"App ready."**
+3. **Sign in to Claude.** In that same black window, type `claude` and press Return, follow the sign-in that opens in your browser, then type `exit` and press Return.
+4. **Get your ElevenLabs key.** Go to [elevenlabs.io](https://elevenlabs.io), sign in, open your profile menu → **API Keys** → **Create**, and copy the key.
+
+**Each time you want to fly:**
+
+1. Start **X-Plane** and begin a flight. (No sim handy? You can fly a built-in scenario instead — pick one in the app.)
+2. **Double-click `start.command`.** Your web browser opens the app. Keep that black window open while you fly; closing it stops the app.
+3. The first time, the app shows a **Settings** screen. Paste your **ElevenLabs key**, check the **X-Plane path** is right, and click **Save**.
+4. **Talk to ATC:** hold the **PTT** button on screen (or hold the **Spacebar**) and speak. Let go to send. Your browser will ask to use the microphone the first time — click **Allow**.
+
+**Trouble?**
+- *"can't be opened / unidentified developer"* → right-click the `.command` file and choose **Open** (only needed once).
+- *The Settings screen won't go green* → it lists what's missing (Claude, voice key, or X-Plane path). Fix that item; the X-Plane path field lets you point at your install if it isn't the default.
+- *No controller voice* → make sure you pasted the ElevenLabs key in Settings.
+
+> **Status:** Departure and ground/tower phases are solid. En-route and arrival handling is partially implemented. VFR only.
 
 ## What it does
 
@@ -46,14 +69,18 @@ Design notes live in [`CLAUDE.md`](CLAUDE.md).
 - **Python 3.9+** (developed against 3.14). The core runtime is standard-library only.
 - **Node + npm** for the desktop UI; the Rust/Tauri toolchain if you want to build a native bundle.
 
-## Quickstart
+## Developer setup
+
+If you have the toolchain (these need Xcode Command Line Tools — `xcode-select --install` — which provide `make`, plus Python and Node):
 
 ```bash
 make setup     # venv + Python deps + UI deps + .env, and checks for the claude CLI
-make dev       # runs the backend and the desktop (Tauri) app together
+make dev       # backend + the desktop (Tauri) app together
 # or:
 make dev-web   # backend + browser UI at http://localhost:1420 (no Rust toolchain)
 ```
+
+(The double-click `setup.command` / `start.command` in the Quick start above do the same thing for non-developers, installing the toolchain via Homebrew first.)
 
 On first launch the app opens a **Settings view** with a checklist (the "doctor"): paste your ElevenLabs API key, confirm your X-Plane path, and you're flying. Claude needs nothing here — it uses the `claude` CLI you're already signed into. No file editing required; the key is saved to `.env` for you.
 
