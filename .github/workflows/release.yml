@@ -1,0 +1,68 @@
+name: Release (macOS app)
+
+# Builds a prepackaged macOS bundle so a non-technical user can download one
+# zip, double-click start.command, and run the app — no Node, npm, or Rust.
+#
+# Trigger by pushing a version tag (e.g. `git tag v0.1.0 && git push --tags`),
+# or run manually from the Actions tab to produce a downloadable artifact.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-macos:
+    runs-on: macos-14   # Apple Silicon; we cross-build a universal binary
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ui/src-tauri
+
+      - name: Install UI dependencies
+        working-directory: ui
+        run: npm ci
+
+      - name: Build Tauri app (universal)
+        working-directory: ui
+        run: npm run tauri build -- --bundles app --target universal-apple-darwin
+
+      - name: Stage release payload
+        run: bash packaging/macos/stage.sh
+
+      - name: Zip (ditto preserves the .app bundle)
+        working-directory: dist
+        run: ditto -c -k --sequesterRsrc --keepParent "X-Plane Virtual ATC" "X-Plane-Virtual-ATC-macOS.zip"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: X-Plane-Virtual-ATC-macOS
+          path: dist/X-Plane-Virtual-ATC-macOS.zip
+
+      - name: Publish to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/X-Plane-Virtual-ATC-macOS.zip
+          body: |
+            ## Download & run (macOS)
+
+            1. Download `X-Plane-Virtual-ATC-macOS.zip` below and unzip it.
+            2. Open the folder, **right-click `setup.command` → Open** (once — installs Python and Claude).
+            3. From then on, double-click **`start.command`** to fly.
+
+            See `READ ME FIRST.txt` inside the zip for details.

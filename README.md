@@ -4,9 +4,19 @@
 
 ![X-Plane Virtual ATC](docs/screenshot.png)
 
-## Quick start (Mac — no setup experience needed)
+## Download the app (Mac — easiest)
 
-You'll need: a Mac, **X-Plane 12** installed, a **Claude** subscription ([claude.ai](https://claude.ai)), and a free **ElevenLabs** account ([elevenlabs.io](https://elevenlabs.io)) for the controller's voice.
+A prebuilt macOS app is published on the [Releases page](https://github.com/spamsch/xplane-virtual-atc/releases). It includes the desktop app already built — no Node, Rust, or building required.
+
+1. Download `X-Plane-Virtual-ATC-macOS.zip` from the latest release and unzip it.
+2. **Right-click `setup.command` → Open** (just the first time — it installs Python and Claude, may ask for your Mac password). When it's done, type `claude` to sign in, then `exit`.
+3. From then on, double-click **`start.command`**. The app window opens on its own; keep the small black window open while you fly, and quit the app to stop.
+
+`READ ME FIRST.txt` in the zip has the same steps plus troubleshooting. You still need **X-Plane 12**, a **Claude** subscription, and a free **ElevenLabs** key (paste it in the app's Settings).
+
+## Build it yourself (Mac — from source)
+
+Prefer to run from source, or on another platform? You'll need: a Mac, **X-Plane 12** installed, a **Claude** subscription ([claude.ai](https://claude.ai)), and a free **ElevenLabs** account ([elevenlabs.io](https://elevenlabs.io)) for the controller's voice.
 
 **Install it once:**
 

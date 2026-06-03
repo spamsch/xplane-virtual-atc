@@ -1,0 +1,49 @@
+X-Plane Virtual ATC — macOS
+============================
+
+A talking VFR air traffic controller for X-Plane 12. This folder already
+contains the app, prebuilt — you don't need to install Node, Rust, or build
+anything.
+
+What you need
+-------------
+- A Mac (Apple Silicon or Intel).
+- X-Plane 12.
+- An internet connection the first time (to install Python and Claude).
+
+
+First time — do this once
+-------------------------
+1. Right-click  setup.command  and choose  Open.
+   (Right-click → Open is needed only the first time, because the file was
+   downloaded from the internet. A normal double-click would be blocked.)
+
+2. A black window opens and installs the tools. It may ask for your Mac
+   password once. When it says so, type  claude  and press Return to sign in
+   to Claude in your browser, then type  exit.
+
+3. Close the window.
+
+
+Every time after that — fly
+---------------------------
+Double-click  start.command.
+
+- The app window opens on its own.
+- Keep the small black window open while you fly — quitting the app (or
+  closing that window) stops the controller.
+- Add your ElevenLabs voice key and, if needed, your X-Plane folder in the
+  app's Settings screen. The app tells you what's still missing.
+
+Start a flight in X-Plane near an airport and the controller comes alive.
+Don't have a flight running yet? Load a scenario from the app to try it now.
+
+
+If something doesn't work
+-------------------------
+- "Backend offline" in the app: make sure the black start.command window is
+  still open. If you just started, give it a few seconds to connect.
+- The app won't open / "unidentified developer": run  setup.command  once
+  (right-click → Open) — it clears the download flag for everything here.
+- ATC stays silent: open the app's Settings and check that Claude shows a
+  green check. If not, open the start window, type  claude, sign in, exit.

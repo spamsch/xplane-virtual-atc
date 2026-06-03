@@ -21,6 +21,9 @@ ui/dist/
 # UI — Tauri / Rust
 ui/src-tauri/target/
 
+# Release staging (packaging/macos/stage.sh)
+/dist/
+
 # Docs build artifacts
 docs/*.pdf
 
