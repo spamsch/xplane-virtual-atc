@@ -86,7 +86,7 @@
 
 <div class="drawer">
   <div class="drawer-header">
-    <span class="drawer-title">⚙ Scenario Setup</span>
+    <span class="drawer-title"><span class="gi" data-tech="▸">⚙</span> Scenario Setup</span>
     <button class="close-btn" onclick={close}>✕</button>
   </div>
 

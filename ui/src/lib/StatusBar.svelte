@@ -1,5 +1,8 @@
 <script>
   import { wsStatus, source, scenarioName, phase, station, atcCallsign, backendUptime, xplaneConnected, settingsOpen } from './store.js';
+  import { theme, THEMES, cycleTheme } from './theme.js';
+
+  $: themeLabel = THEMES.find((t) => t.key === $theme)?.label ?? 'THEME';
 
   const phaseLabel = {
     PRE_DEPARTURE: 'Pre-departure', GROUND_DEPARTURE: 'Ground', TAXIING: 'Taxiing',
@@ -50,7 +53,8 @@
     <span class="station-badge">{stationLabel[$station] ?? $station}</span>
     <span class="callsign">{$atcCallsign}</span>
     <span class="phase-label muted">{phaseLabel[$phase] ?? $phase}</span>
-    <button class="settings-btn" onclick={() => settingsOpen.set(true)} title="Settings">⚙</button>
+    <button class="theme-btn" onclick={cycleTheme} title="Switch UI theme">{themeLabel}</button>
+    <button class="settings-btn" onclick={() => settingsOpen.set(true)} title="Settings"><span class="gi" data-tech="CFG">⚙</span></button>
   </div>
 </header>
 
@@ -116,9 +120,23 @@
 
   .callsign { color: var(--text); font-weight: 600; }
   .phase-label { font-size: 11px; }
+  .theme-btn {
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    padding: 2px 7px;
+    border-radius: var(--radius);
+    transition: color 0.15s, border-color 0.15s;
+  }
+  .theme-btn:hover { color: var(--accent-blue); border-color: var(--border-bright); }
   .settings-btn {
     background: none; color: var(--text-muted); font-size: 14px;
     width: 22px; height: 22px; border-radius: var(--radius);
   }
   .settings-btn:hover { background: var(--bg-input); color: var(--text); }
+  /* The "CFG" text tag in the Technical theme needs more room than the 22px gear. */
+  :global(html[data-theme='technical']) .settings-btn { width: auto; padding: 0 8px; }
 </style>

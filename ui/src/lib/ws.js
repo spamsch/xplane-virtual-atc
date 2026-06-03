@@ -238,7 +238,7 @@ function dispatch(msg) {
       console.error('[backend]', msg.message);
       messages.update(list => [...list, {
         role: 'system',
-        text: `⚠ ${msg.message}`,
+        text: `[!] ${msg.message}`,
         model: null,
         timestamp: Date.now() / 1000,
       }]);

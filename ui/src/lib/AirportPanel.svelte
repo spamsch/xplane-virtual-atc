@@ -95,7 +95,7 @@
 
   {:else}
     <div class="no-airport">
-      <div class="no-airport-icon">✈</div>
+      <div class="no-airport-icon gi">✈</div>
       <div class="muted">No airport detected</div>
     </div>
   {/if}
@@ -104,7 +104,7 @@
 
   <!-- Scenario button -->
   <button class="scenario-btn" onclick={() => scenarioDrawerOpen.set(true)}>
-    ⚙ Scenario
+    <span class="gi" data-tech="▸">⚙</span> Scenario
   </button>
 </aside>
 

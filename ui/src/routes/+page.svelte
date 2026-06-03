@@ -9,8 +9,13 @@
   import ConfigView from '$lib/ConfigView.svelte';
   import { scenarioDrawerOpen, wsStatus, xplaneConnected, airport, loading, loadingLabel,
            configStatus, settingsOpen } from '$lib/store.js';
+  import { theme, applyTheme } from '$lib/theme.js';
+  import { get } from 'svelte/store';
 
-  onMount(() => initWs());
+  onMount(() => {
+    applyTheme(get(theme));
+    initWs();
+  });
   onDestroy(() => closeWs());
 
   $: offline = $wsStatus !== 'connected';
@@ -31,7 +36,7 @@
 
   {#if offline}
     <div class="offline-banner">
-      <span class="offline-icon">⚠</span>
+      <span class="offline-icon gi" data-tech="!">⚠</span>
       Backend offline — start <code>python3 backend/server.py</code>
       <span class="offline-retry">Retrying…</span>
     </div>
@@ -43,10 +48,10 @@
   {:else if idle}
     <div class="idle-banner">
       {#if $xplaneConnected}
-        <span class="idle-icon">🛬</span>
+        <span class="idle-icon gi">🛬</span>
         <span>X-Plane connected — waiting for you to load a flight. The controller wakes up once you're near an airport.</span>
       {:else}
-        <span class="idle-icon">🛩</span>
+        <span class="idle-icon gi">🛩</span>
         <span>No X-Plane connection. Start a flight in X-Plane and it'll connect automatically — or
           <button class="link-btn" onclick={openScenario}>load a scenario</button> to begin right now.</span>
       {/if}
@@ -74,7 +79,7 @@
   :global(body) {
     background: var(--bg-base);
     color: var(--text);
-    font-family: 'JetBrains Mono', 'Cascadia Code', 'Fira Code', ui-monospace, monospace;
+    font-family: var(--font-mono);
     font-size: 13px;
     overflow: hidden;
     height: 100vh;
@@ -99,6 +104,57 @@
     --pilot-bubble:  rgba(63, 185, 80, 0.10);
     --panel-gap:     1px;
     --radius:        4px;
+    --font-mono:     'JetBrains Mono', 'Cascadia Code', 'Fira Code', ui-monospace, monospace;
+  }
+
+  /* ───────────────────────────────────────────────────────────────
+     Technical theme — avionics / engineering-terminal look.
+     Cool near-black panels, hairline borders, cyan + amber + mint
+     accents, square corners, IBM Plex Mono. No pictographic icons.
+     ─────────────────────────────────────────────────────────────── */
+  :global(html[data-theme='technical']) {
+    --bg-base:       #e6ecf1;
+    --bg-panel:      #f3f6f9;
+    --bg-panel-alt:  #eaeff4;
+    --bg-input:      #ffffff;
+    --border:        #c3cfda;
+    --border-bright: #93a6b6;
+    --text:          #16222c;
+    --text-muted:    #51626f;
+    --text-dim:      #93a3af;
+    --accent-green:  #0a9b6b;
+    --accent-blue:   #0a7fbf;
+    --accent-amber:  #b3730a;
+    --accent-red:    #cf3a32;
+    --accent-purple: #6b54d8;
+    --atc-bubble:    rgba(10, 127, 191, 0.08);
+    --pilot-bubble:  rgba(10, 155, 107, 0.08);
+    --radius:        0px;
+    --font-mono:     'IBM Plex Mono', 'JetBrains Mono', ui-monospace, monospace;
+  }
+
+  /* Faint horizontal rule texture — reads as engineering paper, not a CRT. */
+  :global(html[data-theme='technical'] body) {
+    background-image: repeating-linear-gradient(
+      0deg, transparent 0, transparent 3px, rgba(22, 34, 44, 0.03) 3px, rgba(22, 34, 44, 0.03) 4px
+    );
+    letter-spacing: 0.01em;
+  }
+
+  /* Icon handling. `.gi` wraps a pictographic emoji. In the default theme it
+     just shows the emoji. In the Technical theme the emoji is suppressed and,
+     if a terse text tag is supplied via data-tech, that is rendered instead;
+     decorative icons with no data-tech simply vanish. */
+  :global(html[data-theme='technical'] .gi) {
+    font-size: 0 !important;
+    line-height: inherit;
+  }
+  :global(html[data-theme='technical'] .gi[data-tech])::after {
+    content: attr(data-tech);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    color: currentColor;
   }
 
   :global(button) { cursor: pointer; border: none; font-family: inherit; font-size: inherit; }

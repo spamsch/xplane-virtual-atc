@@ -71,7 +71,7 @@
   <div class="chat" bind:this={chatEl}>
     {#if $messages.length === 0}
       <div class="empty-chat">
-        <div class="empty-icon">📻</div>
+        <div class="empty-icon gi">📻</div>
         <div class="empty-text">Awaiting first transmission…</div>
       </div>
     {/if}
@@ -116,7 +116,7 @@
   <!-- Transcription preview (shows what STT heard before LLM fires) -->
   {#if $transcription}
     <div class="transcription-preview">
-      <span class="tx-icon">🎙</span>
+      <span class="tx-icon gi" data-tech="RX">🎙</span>
       <span class="tx-text">{$transcription}</span>
     </div>
   {/if}
@@ -143,9 +143,9 @@
           ontouchend={stopPTT}
           disabled={$thinking}
           title="Push to Talk (or hold Space)"
-        >{$pttActive ? '● REC' : '🎙 PTT'}</button>
+        >{#if $pttActive}● REC{:else}<span class="gi">🎙</span> PTT{/if}</button>
       {:else}
-        <button class="mic-btn" onclick={enableMic} title="Enable microphone">🎙</button>
+        <button class="mic-btn" onclick={enableMic} title="Enable microphone"><span class="gi" data-tech="MIC">🎙</span></button>
       {/if}
       <button
         class="tx-btn"
