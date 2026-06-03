@@ -62,7 +62,7 @@ from xplane.simulator import ScenarioSimulator, Scenario
 
 log = logging.getLogger(__name__)
 
-VERSION = "0.1.1"
+VERSION = "0.1.2"
 HOST    = "localhost"
 PORT    = 8765
 
