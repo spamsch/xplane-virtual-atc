@@ -139,9 +139,10 @@ def _parse_freq_mhz(s: str) -> float:
 
 def parse_apt_dat(path: Path, cache_path: Optional[Path] = None) -> Dict[str, Airport]:
     if cache_path is None:
-        # Bumped to v2 when taxi network + ramp starts were added — the v1 pickle
-        # lacks those fields, so a new filename forces a one-time re-parse.
-        cache_path = path.with_suffix('.vatc_cache_v2.pkl')
+        # Cache version bumps force a one-time re-parse when the schema changes:
+        #   v2 — added taxi network + ramp starts
+        #   v3 — taxi edge name now reads the published designator, not the WED group
+        cache_path = path.with_suffix('.vatc_cache_v3.pkl')
 
     if cache_path.exists() and cache_path.stat().st_mtime >= path.stat().st_mtime:
         log.info(f"Loading apt.dat cache: {cache_path.name}")
@@ -218,14 +219,18 @@ def parse_apt_dat(path: Path, cache_path: Optional[Path] = None) -> Dict[str, Ai
                     pass
                 continue
 
-            # Taxi-route network edge
+            # Taxi-route network edge. Field 4 is a WED routing GROUP id
+            # ("taxiway_A", "runway"), NOT the published taxiway — the real
+            # designator (e.g. "M", "N", "L1") is the trailing field. Edges with
+            # no trailing field are unnamed apron/connector links.
             if code == '1202' and len(parts) >= 5:
                 try:
-                    cat, _, nm = parts[4].partition('_')   # "taxiway_A" → ("taxiway","_","A")
+                    kind = parts[4].split('_', 1)[0]   # "taxiway_A" → "taxiway"; "runway" → "runway"
+                    name = parts[5] if len(parts) > 5 else ''
                     current.taxi_edges.append(TaxiEdge(
                         node1=int(parts[1]), node2=int(parts[2]),
                         oneway=(parts[3] == 'oneway'),
-                        name=nm, is_runway=(cat == 'runway')))
+                        name=name, is_runway=(kind == 'runway')))
                 except (ValueError, IndexError):
                     pass
                 continue

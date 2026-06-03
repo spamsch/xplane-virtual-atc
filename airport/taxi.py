@@ -117,11 +117,6 @@ def _threshold(airport: Airport, runway: str) -> Optional[tuple]:
     return None
 
 
-# Hold nodes within this distance of the cleared threshold form the
-# "departure end" cluster; holds elsewhere on the runway are excluded.
-_THRESHOLD_CLUSTER_M = 350.0
-
-
 def _nearest_node(airport: Airport, lat: float, lon: float) -> Optional[int]:
     best, best_d = None, math.inf
     for nid, n in airport.taxi_nodes.items():
@@ -146,33 +141,16 @@ def compute_route(airport: Airport, lat: float, lon: float,
     if not goals:
         return None
 
-    # Restrict goals to the cleared runway's threshold end. Hold nodes are tagged
-    # with the runway *pair* (e.g. "09L,27R") and run the whole length, so without
-    # this a "27R" clearance could route to the 09L end. Dijkstra then picks the
-    # apron-side node of that cluster (shortest taxi path, no runway crossing).
-    thr = _threshold(airport, runway)
-    if thr:
-        nodes = airport.taxi_nodes
-        near = {n for n in goals
-                if _haversine_m(thr[0], thr[1], nodes[n].lat, nodes[n].lon)
-                <= _THRESHOLD_CLUSTER_M}
-        if near:
-            goals = near
-
     adj = _build_adjacency(airport)
 
-    # Dijkstra from the snapped node to the nearest hold node.
+    # Single-source Dijkstra from the snapped node over the whole network.
     dist: Dict[int, float] = {start: 0.0}
     prev: Dict[int, tuple] = {}        # node → (predecessor, taxiway_name)
     pq: List[tuple] = [(0.0, start)]
-    reached: Optional[int] = None
     while pq:
         d, u = heapq.heappop(pq)
         if d > dist.get(u, math.inf):
             continue
-        if u in goals:
-            reached = u
-            break
         for v, w, name in adj.get(u, ()):
             nd = d + w
             if nd < dist.get(v, math.inf):
@@ -180,8 +158,24 @@ def compute_route(airport: Airport, lat: float, lon: float,
                 prev[v] = (u, name)
                 heapq.heappush(pq, (nd, v))
 
-    if reached is None:
+    reachable = [g for g in goals if g in dist]
+    if not reachable:
         return None
+
+    # Hold nodes are tagged with the runway *pair* (e.g. "09L,27R") and run the
+    # whole length of the strip. For a departure we want the hold at the cleared
+    # runway's threshold end, so pick the reachable hold closest to that
+    # threshold — not merely the nearest one, which could be a mid-field crossing
+    # (or the opposite end). Falls back to nearest-by-taxi if the runway geometry
+    # is unknown.
+    thr = _threshold(airport, runway)
+    nodes = airport.taxi_nodes
+    if thr:
+        reached = min(reachable,
+                      key=lambda n: _haversine_m(thr[0], thr[1],
+                                                 nodes[n].lat, nodes[n].lon))
+    else:
+        reached = min(reachable, key=lambda n: dist[n])
 
     # Reconstruct the taxiway sequence (collapse consecutive dups, drop blanks).
     seq: List[str] = []

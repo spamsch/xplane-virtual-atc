@@ -28,9 +28,9 @@ I
 1201 52.46010 9.69110 both 2
 1201 52.46010 9.69160 both 3
 1201 52.46010 9.69210 both 4
-1202 0 1 twoway taxiway_A
-1202 1 2 twoway taxiway_B
-1202 2 3 twoway taxiway_C
+1202 0 1 twoway taxiway_grp1 A
+1202 1 2 twoway taxiway_grp1 B
+1202 2 3 twoway taxiway_grp2 C
 1204 departure 09,27
 1202 3 4 twoway runway
 
