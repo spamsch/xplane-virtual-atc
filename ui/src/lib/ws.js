@@ -7,7 +7,7 @@ import {
   wsStatus, backendUptime, source, scenarioName, xplaneConnected,
   flightState, airport, activeRunway, atcCallsign, boundaryNotes,
   messages, phase, station, thinking, loading, loadingLabel,
-  configStatus, pttActive, transcription, audioEnabled,
+  configStatus, pttActive, transcription, audioEnabled, vfrWeather,
 } from './store.js';
 import { playMicClick } from './sound.js';
 
@@ -167,6 +167,10 @@ function dispatch(msg) {
       loadingLabel.set(msg.label ?? '');
       break;
 
+    case 'vfr_weather':
+      vfrWeather.set({ busy: !!msg.busy, ok: msg.ok ?? null, message: msg.message ?? '' });
+      break;
+
     case 'config_status':
       configStatus.set(msg);
       break;
@@ -250,6 +254,11 @@ export function sendMessage(type, data = {}) {
   if (ws?.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({ type, ...data }));
   }
+}
+
+export function setVfrWeather() {
+  vfrWeather.set({ busy: true, ok: null, message: 'Setting VFR day…' });
+  sendMessage('set_vfr_weather');
 }
 
 export function sendTransmission(text) {

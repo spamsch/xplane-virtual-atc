@@ -1,6 +1,7 @@
 <script>
-  import { airport, activeRunway, com1Mhz, com2Mhz, scenarioDrawerOpen } from './store.js';
-  import { sendMessage } from './ws.js';
+  import { airport, activeRunway, com1Mhz, com2Mhz, scenarioDrawerOpen,
+           xplaneConnected, vfrWeather } from './store.js';
+  import { sendMessage, setVfrWeather } from './ws.js';
 
   const freqTypeOrder = [53, 54, 50, 52, 55, 56, 51];  // GND, TWR, ATIS, CLD, APP, DEP, CTAF
   const freqTypeShort = {
@@ -101,6 +102,18 @@
   {/if}
 
   <div class="spacer"></div>
+
+  <!-- VFR day weather (live X-Plane only): real wind/pressure/temp, scattered
+       clouds, visibility > 5 sm, local noon. -->
+  {#if $xplaneConnected}
+    <button class="vfr-btn" onclick={setVfrWeather} disabled={$vfrWeather.busy}
+            title="Download real weather, keep wind/pressure/temp, set scattered clouds, visibility >5 sm, and local noon">
+      {$vfrWeather.busy ? 'Setting weather…' : 'VFR Day'}
+    </button>
+    {#if $vfrWeather.message && !$vfrWeather.busy}
+      <div class="vfr-msg" class:bad={$vfrWeather.ok === false}>{$vfrWeather.message}</div>
+    {/if}
+  {/if}
 
   <!-- Scenario button -->
   <button class="scenario-btn" onclick={() => scenarioDrawerOpen.set(true)}>
@@ -216,4 +229,26 @@
     border-color: var(--accent-blue);
     color: var(--accent-blue);
   }
+
+  .vfr-btn {
+    width: 100%;
+    padding: 8px;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    transition: border-color 0.15s, color 0.15s;
+  }
+  .vfr-btn:not(:disabled):hover { border-color: var(--accent-amber); color: var(--accent-amber); }
+  .vfr-btn:disabled { opacity: 0.6; cursor: default; }
+  .vfr-msg {
+    font-size: 10px;
+    line-height: 1.4;
+    color: var(--text-muted);
+    margin-top: 6px;
+  }
+  .vfr-msg.bad { color: var(--accent-red); }
 </style>

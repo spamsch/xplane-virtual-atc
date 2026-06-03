@@ -290,6 +290,8 @@ async def _handle_client_message(msg: dict):
         await _new_flight()
     elif t == "set_config":
         await _set_config(msg.get("config", {}))
+    elif t == "set_vfr_weather":
+        await _set_vfr_weather()
     elif t == "get_config_status":
         await _broadcast_config_status()
 
@@ -930,6 +932,32 @@ async def _set_config(cfg: dict):
         await asyncio.to_thread(_audio_tts.check)
     await _broadcast_config_status()
     log.info("Configuration updated via Settings.")
+
+
+async def _set_vfr_weather():
+    """Set a clear-ish VFR day on the live sim: real weather frozen (wind,
+    pressure, temperature kept real), a few scattered clouds, visibility above
+    5 sm, and the clock at local noon. Only works against a connected X-Plane."""
+    if _source != "xplane" or not _xplane_connected:
+        await _broadcast("vfr_weather", ok=False,
+                         message="Connect to X-Plane first — weather can only be set on the live sim.")
+        return
+    from xplane import sim_control
+    await _broadcast("vfr_weather", ok=None, busy=True,
+                     message="Downloading real weather, then setting a VFR day…")
+    try:
+        result = await asyncio.to_thread(
+            sim_control.apply_vfr_day, config.XPLANE_IP, config.XPLANE_REST_PORT)
+        log.info(f"VFR weather applied: {result}")
+        await _broadcast(
+            "vfr_weather", ok=True, busy=False,
+            message=(f"VFR day set — {result['clouds']}, visibility "
+                     f"{result['visibility_sm']} sm, local noon. "
+                     f"Wind, pressure and temperature kept real."))
+    except Exception as e:
+        log.warning(f"VFR weather failed: {e}")
+        await _broadcast("vfr_weather", ok=False, busy=False,
+                         message=f"Could not set weather: {e}")
 
 
 async def run():

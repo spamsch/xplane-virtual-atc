@@ -28,6 +28,7 @@ export const loading      = writable(false);   // backend is setting up a sessio
 export const loadingLabel = writable('');       // human-readable loading message
 export const configStatus = writable(null);     // {checks, configured, current} — the setup doctor
 export const settingsOpen = writable(false);    // Settings/config view manually opened
+export const vfrWeather   = writable({ busy: false, ok: null, message: '' });  // "VFR day" button state
 
 // Audio
 export const pttActive       = writable(false);   // mic is recording
