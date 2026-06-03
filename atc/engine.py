@@ -18,6 +18,7 @@ from typing import Any, Optional
 
 from airport.parser import Airport
 from aircraft.database import AircraftPerf
+from atc import phraseology
 
 log = logging.getLogger(__name__)
 
@@ -137,13 +138,19 @@ Rules:
 - Respond ONLY with the radio transmission — no explanation, no stage directions.
 - Use standard ICAO phraseology.
 - Address the pilot by their callsign on every transmission.
+- Respond ONLY to what the pilot actually said. On a bare initial contact
+  (station + callsign with no request), reply "<callsign>, <station>, pass your
+  message." — nothing more. NEVER volunteer a clearance, taxi route, runway, or
+  instruction the pilot did not request.
 - Keep it concise. One clearance per transmission.
 - For taxi clearances, use ONLY taxiways and holding points given to you in the
   instructions below. Never invent, guess, or substitute taxiway letters or
   holding-point names. If none are provided, keep the taxi instruction generic
   (e.g. "taxi to the holding point for runway 27, follow the green centreline").
 - If the request is outside your authority (e.g. pilot asks tower questions to
-  ground), redirect them politely to the correct frequency.{extra_block}"""
+  ground), redirect them politely to the correct frequency.
+
+{examples}{extra_block}"""
 
 
 def respond(pilot_message: str,
@@ -170,6 +177,7 @@ def respond(pilot_message: str,
         atc_callsign=atc_callsign,
         situation=situation,
         history=history_text,
+        examples=phraseology.render(),
         extra_block=extra_block,
     )
     prompt = f"{system}\n\nPilot: {pilot_message}\nATC:"

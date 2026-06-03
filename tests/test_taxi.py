@@ -9,10 +9,13 @@ Uses a tiny synthetic apt.dat so the route is known exactly:
 
 So from node 0, the route to hold short of runway 27 is "via A, B".
 """
+from unittest.mock import patch
+
 import pytest
 
 from airport.parser import parse_apt_dat
 from airport import taxi
+from atc import phraseology
 from atc.session import ATCSession
 
 _APT = """\
@@ -128,3 +131,32 @@ class TestSessionTaxiInstruction:
         instr = s._taxi_instruction(None, None)
         assert "No published taxi route" in instr
         assert "do NOT invent" in instr
+
+    def test_taxi_clearance_only_when_requested(self, airport):
+        # Bare initial contact → the LLM is NOT handed a taxi route (so it can
+        # reply "pass your message" instead of clearing taxi unrequested).
+        s = self._session(airport)
+        with patch("atc.session.atc_engine.respond",
+                   return_value="D-EIYD, pass your message.") as m:
+            s.process("Hannover Ground, D-EIYD.", lat=52.46010, lon=9.69010)
+        assert "TAXI ROUTE" not in (m.call_args.kwargs.get("extra_instructions") or "")
+
+    def test_taxi_request_hands_over_route(self, airport):
+        s = self._session(airport)
+        with patch("atc.session.atc_engine.respond",
+                   return_value="D-EIYD, taxi via A, B.") as m:
+            s.process("Hannover Ground, D-EIYD, request taxi.",
+                      lat=52.46010, lon=9.69010)
+        assert "via A, B" in (m.call_args.kwargs.get("extra_instructions") or "")
+
+
+class TestPhraseologyExamples:
+    def test_initial_contact_example_present(self):
+        block = phraseology.render()
+        assert "pass your message" in block
+        assert "Hannover Ground, D-EIYD." in block
+
+    def test_examples_have_no_format_braces(self):
+        # Rendered into a str.format() template — stray braces would break it.
+        block = phraseology.render()
+        assert "{" not in block and "}" not in block

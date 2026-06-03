@@ -487,13 +487,23 @@ class TestExtraInstructions:
         extra = call_kwargs.get("extra_instructions", "") or ""
         assert "7000" in extra or "CTR" in extra
 
-    def test_taxi_layout_injected_on_ground_call(self, eddv, eddg, c172, conditions):
+    def test_no_taxi_layout_without_taxi_request(self, eddv, eddg, c172, conditions):
+        # A startup request (or bare contact) must NOT receive a taxi clearance —
+        # the controller should not pre-empt a request the pilot didn't make.
         s = make_session(eddv, eddg, c172, conditions)
         with patch("atc.session.atc_engine.respond", return_value="Startup approved.") as mock:
             s.process("Hannover Ground, D-EIYD, request startup.")
         extra = mock.call_args.kwargs.get("extra_instructions") or ""
-        # Ground calls always receive airport layout context so the LLM can
-        # issue real taxiway designators in the eventual taxi clearance.
+        assert "taxi route" not in extra.lower()
+
+    def test_taxi_layout_injected_on_taxi_request(self, eddv, eddg, c172, conditions):
+        # When taxi IS requested, the controller gets the airport's runway/taxi
+        # context so it can issue a real clearance (here, no position → the
+        # "do not invent" fallback, which still names the airport + runway).
+        s = make_session(eddv, eddg, c172, conditions)
+        with patch("atc.session.atc_engine.respond", return_value="Taxi approved.") as mock:
+            s.process("Hannover Ground, D-EIYD, request taxi.")
+        extra = mock.call_args.kwargs.get("extra_instructions") or ""
         assert "EDDV" in extra
         assert "27L" in extra   # active_runway from conditions fixture
 

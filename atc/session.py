@@ -86,6 +86,10 @@ _CTR_EXIT_RE = re.compile(
     re.IGNORECASE,
 )
 _TAXI_RE = re.compile(r'\btaxi\s+(?:to|via)\b', re.IGNORECASE)
+# A pilot asking for taxi (or reporting ready to taxi). Used to gate the taxi
+# clearance so a bare initial contact doesn't get one unrequested.
+_TAXI_REQUEST_RE = re.compile(r'\b(?:request\s+taxi|ready\s+(?:to|for)\s+taxi|for\s+taxi|taxi)\b',
+                              re.IGNORECASE)
 _PARK_RE = re.compile(r'readback correct', re.IGNORECASE)
 
 
@@ -289,7 +293,11 @@ class ATCSession:
                 "contact the next frequency (use the departure/radar frequency from "
                 "the airport's frequency list)."
             )
-        if self.current_station == Station.GND:
+        # Only hand over a taxi clearance when the pilot actually asks for taxi.
+        # Otherwise (e.g. a bare initial contact) the controller must not pre-empt
+        # the request — the system prompt's examples make it reply "pass your
+        # message" instead.
+        if self.current_station == Station.GND and _TAXI_REQUEST_RE.search(pilot_message):
             extra_parts.append(self._taxi_instruction(lat, lon))
 
         # Model: Opus for first call on each new station, Sonnet thereafter
