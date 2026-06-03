@@ -139,6 +139,7 @@ _tx_lock: Optional[asyncio.Lock] = None   # serialise concurrent LLM calls
 _loop: Optional[asyncio.AbstractEventLoop] = None   # main loop (for thread-safe scheduling)
 _xplane_connected: bool = False  # is the X-Plane REST API actually reachable right now
 _airport_db_loading: bool = False   # apt.dat parse in progress (deferred until configured)
+_startup_vfr_done: bool = False     # VFR_WEATHER_ON_START applied once this run
 
 MAX_AUDIO_BYTES = 2 * 1024 * 1024   # 2 MB ≈ 62 s at 16 kHz 16-bit mono
 ACF_TAILNUM_BYTES = 40              # sim/aircraft/view/acf_tailnum is char[40]
@@ -805,6 +806,7 @@ async def _xplane_probe_loop():
 
 
 async def _state_poll_loop():
+    global _startup_vfr_done
     last_airport_check = 0.0
 
     while True:
@@ -813,6 +815,16 @@ async def _state_poll_loop():
                 state = _driver.state
                 if state.is_flight_loaded:
                     await _broadcast("state_update", **_state_dict(state))
+
+                    # VFR_WEATHER_ON_START: once the flight + weather are loaded,
+                    # apply the VFR day a single time (in the background so the
+                    # poll loop keeps running).
+                    if (config.VFR_WEATHER_ON_START and not _startup_vfr_done
+                            and _source == "xplane" and _xplane_connected
+                            and state.qnh_hpa > 0):
+                        _startup_vfr_done = True
+                        log.info("VFR_WEATHER_ON_START — applying VFR day at startup")
+                        asyncio.create_task(_set_vfr_weather())
 
                     # Re-check airport every 10 s
                     now = time.time()

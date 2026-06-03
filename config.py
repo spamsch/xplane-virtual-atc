@@ -17,6 +17,12 @@ LOCAL_RECV_PORT = int(os.environ.get("LOCAL_PORT", "49001"))
 # REST API (X-Plane 12.1.0+) — enable in Network & Sound → "Enable local network access"
 XPLANE_REST_PORT = int(os.environ.get("XPLANE_REST_PORT", "8086"))
 
+# When true, the backend applies a "VFR day" once at startup as soon as X-Plane
+# is connected and a flight is loaded: real weather frozen (wind/pressure/temp
+# stay real), a few scattered clouds, visibility > 5 sm, and local noon. Same as
+# clicking the VFR Day button, done automatically.
+VFR_WEATHER_ON_START = os.environ.get("VFR_WEATHER_ON_START", "false").lower() in ("1", "true", "yes")
+
 _STEAM_BASE = Path.home() / "Library/Application Support/Steam/steamapps/common/X-Plane 12"
 XPLANE_BASE = Path(os.environ.get("XPLANE_PATH", str(_STEAM_BASE)))
 
