@@ -50,6 +50,8 @@ def _active_backend() -> str:
     explicit = os.environ.get("STT_BACKEND", "auto")
     if explicit != "auto":
         return explicit
+    if config.ELEVENLABS_API_KEY:
+        return "elevenlabs"
     return "openai" if config.OPENAI_API_KEY else "local"
 
 
@@ -117,6 +119,65 @@ def check_openai() -> bool:
         return False
 
 
+# ─────────────────────────── ElevenLabs (Scribe) backend ─────────────────────
+
+def _transcribe_elevenlabs(audio_bytes: bytes, callsign: Optional[str]) -> str:
+    """Transcribe via ElevenLabs Scribe. callsign is unused — Scribe has no
+    prompt-biasing parameter, but its accuracy on ATC audio is high."""
+    boundary = b"VATCBoundaryEL7f3a"
+
+    def part(name: str, value: bytes, filename: str = "", content_type: str = "") -> bytes:
+        header = f'Content-Disposition: form-data; name="{name}"'
+        if filename:
+            header += f'; filename="{filename}"'
+        lines = [b"--" + boundary, header.encode()]
+        if content_type:
+            lines.append(f"Content-Type: {content_type}".encode())
+        lines += [b"", value]
+        return b"\r\n".join(lines)
+
+    body = b"\r\n".join([
+        part("file", audio_bytes, filename="audio.wav", content_type="audio/wav"),
+        part("model_id", config.ELEVENLABS_STT_MODEL.encode()),
+        part("language_code", b"eng"),       # force English — ATC phraseology
+        part("tag_audio_events", b"false"),  # no "(static)" / "(beep)" junk
+        part("diarize", b"false"),
+        b"--" + boundary + b"--",
+    ])
+    req = urllib.request.Request(
+        "https://api.elevenlabs.io/v1/speech-to-text",
+        data=body,
+        headers={
+            "xi-api-key": config.ELEVENLABS_API_KEY,
+            "Content-Type": f"multipart/form-data; boundary={boundary.decode()}",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        return json.loads(resp.read()).get("text", "").strip()
+
+
+def check_elevenlabs() -> bool:
+    """Verify the ElevenLabs key at startup (cheap GET, no transcription spend)."""
+    if not config.ELEVENLABS_API_KEY:
+        return False
+    try:
+        log.info(
+            f"ElevenLabs STT configured — model={config.ELEVENLABS_STT_MODEL!r}. "
+            f"Verifying key…"
+        )
+        req = urllib.request.Request(
+            "https://api.elevenlabs.io/v1/user/subscription",
+            headers={"xi-api-key": config.ELEVENLABS_API_KEY},
+        )
+        with urllib.request.urlopen(req, timeout=10):
+            pass
+        log.info("ElevenLabs STT key verified OK.")
+        return True
+    except Exception as e:
+        log.warning(f"ElevenLabs STT key check failed: {e}")
+        return False
+
+
 # ─────────────────────────── local backend ───────────────────────────────────
 
 def _load_local_model():
@@ -164,9 +225,12 @@ def _transcribe_local(audio_bytes: bytes, callsign: Optional[str]) -> str:
 # ─────────────────────────── public API ──────────────────────────────────────
 
 def preload():
-    """Call once at server startup. Loads local model or verifies OpenAI key."""
+    """Call once at server startup. Verifies the cloud key or loads the local model."""
     backend = _active_backend()
-    if backend == "openai":
+    if backend == "elevenlabs":
+        log.info("STT backend: ElevenLabs Scribe (no local model download needed)")
+        check_elevenlabs()
+    elif backend == "openai":
         log.info("STT backend: OpenAI (no local model download needed)")
         check_openai()
     else:
@@ -187,6 +251,9 @@ def transcribe(audio_bytes: bytes, *, callsign: Optional[str] = None) -> str:
     -------
     Transcribed text, whitespace-stripped.
     """
-    if _active_backend() == "openai":
+    backend = _active_backend()
+    if backend == "elevenlabs":
+        return _transcribe_elevenlabs(audio_bytes, callsign).strip()
+    if backend == "openai":
         return _transcribe_openai(audio_bytes, callsign).strip()
     return _transcribe_local(audio_bytes, callsign)

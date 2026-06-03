@@ -60,12 +60,18 @@ _kokoro_instance = None   # lazy singleton
 
 def _openai_request(text: str, voice: str) -> bytes:
     """Make a single OpenAI TTS API call; return raw WAV bytes."""
-    payload = json.dumps({
+    body = {
         "model": config.OPENAI_TTS_MODEL,
         "input": text,
         "voice": voice,
         "response_format": "wav",
-    }).encode()
+    }
+    # `instructions` is only honored by the gpt-4o-* TTS models; tts-1/tts-1-hd
+    # reject it. Pin pronunciation so German/English aren't mixed per word.
+    instructions = getattr(config, "OPENAI_TTS_INSTRUCTIONS", "")
+    if instructions and config.OPENAI_TTS_MODEL.startswith("gpt-4o"):
+        body["instructions"] = instructions
+    payload = json.dumps(body).encode()
     req = urllib.request.Request(
         "https://api.openai.com/v1/audio/speech",
         data=payload,
@@ -105,6 +111,65 @@ def _backend_openai(text: str, voice: str) -> tuple[np.ndarray, int]:
     if not config.OPENAI_API_KEY:
         raise RuntimeError("OPENAI_API_KEY is not set")
     return decode_wav(_openai_request(text, voice))
+
+
+# ─────────────────────────── ElevenLabs TTS backend ──────────────────────────
+
+_ELEVENLABS_SR = 24_000   # pcm_24000 → 16-bit mono PCM at 24 kHz
+
+
+def _elevenlabs_request(text: str, voice_id: str) -> bytes:
+    """Call ElevenLabs TTS; return raw 16-bit mono PCM at 24 kHz.
+
+    pcm_24000 avoids an MP3 decode dependency — the bytes are already linear PCM.
+    """
+    url = (f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
+           f"?output_format=pcm_{_ELEVENLABS_SR}")
+    payload = json.dumps({
+        "text": text,
+        "model_id": config.ELEVENLABS_TTS_MODEL,
+    }).encode()
+    req = urllib.request.Request(
+        url,
+        data=payload,
+        headers={
+            "xi-api-key": config.ELEVENLABS_API_KEY,
+            "Content-Type": "application/json",
+            "Accept": "audio/pcm",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        return resp.read()
+
+
+def _backend_elevenlabs(text: str, voice_id: str) -> tuple[np.ndarray, int]:
+    if not config.ELEVENLABS_API_KEY:
+        raise RuntimeError("ELEVENLABS_API_KEY is not set")
+    pcm = _elevenlabs_request(text, voice_id)
+    samples = np.frombuffer(pcm, dtype="<i2").astype(np.float32) / 32768.0
+    return samples, _ELEVENLABS_SR
+
+
+def check_elevenlabs() -> bool:
+    """Verify the ElevenLabs key is usable (cheap GET, no character spend)."""
+    if not config.ELEVENLABS_API_KEY:
+        return False
+    try:
+        log.info(
+            f"ElevenLabs TTS configured — model={config.ELEVENLABS_TTS_MODEL!r} "
+            f"voice={config.ELEVENLABS_VOICE_ID!r}. Verifying key…"
+        )
+        req = urllib.request.Request(
+            "https://api.elevenlabs.io/v1/user/subscription",
+            headers={"xi-api-key": config.ELEVENLABS_API_KEY},
+        )
+        with urllib.request.urlopen(req, timeout=10):
+            pass
+        log.info("ElevenLabs key verified OK.")
+        return True
+    except Exception as e:
+        log.warning(f"ElevenLabs key check failed: {e}")
+        return False
 
 
 # ─────────────────────────── Kokoro helpers ──────────────────────────────────
@@ -229,12 +294,14 @@ def synthesize(
     Parameters
     ----------
     text    : text to speak
-    voice   : voice name; meaning depends on backend
+    voice   : voice name/id; meaning depends on backend
+              elevenlabs: voice id (defaults to config.ELEVENLABS_VOICE_ID)
+              openai: 'onyx', 'echo', 'nova' …
               kokoro: 'am_adam' (default), 'am_michael', 'am_echo', 'af_sarah' …
               piper:  'en_US-lessac-high', 'en_US-ryan-high' …
               say:    ignored
-    backend : 'kokoro', 'piper', 'say', or 'auto'
-              auto order: kokoro → piper → say
+    backend : 'elevenlabs', 'openai', 'kokoro', 'piper', 'say', or 'auto'
+              auto order: elevenlabs → openai → kokoro → piper → say
 
     Returns
     -------
@@ -244,7 +311,9 @@ def synthesize(
     resolved_voice   = voice   or config.TTS_VOICE
 
     if resolved_backend == 'auto':
-        if config.OPENAI_API_KEY:
+        if config.ELEVENLABS_API_KEY:
+            resolved_backend = 'elevenlabs'
+        elif config.OPENAI_API_KEY:
             resolved_backend = 'openai'
         elif _kokoro_available():
             resolved_backend = 'kokoro'
@@ -253,6 +322,9 @@ def synthesize(
         else:
             resolved_backend = 'say'
 
+    if resolved_backend == 'elevenlabs':
+        # ElevenLabs uses a voice *id*, not the generic TTS_VOICE name.
+        return _backend_elevenlabs(text, voice or config.ELEVENLABS_VOICE_ID)
     if resolved_backend == 'openai':
         return _backend_openai(text, resolved_voice)
     if resolved_backend == 'kokoro':
@@ -262,3 +334,30 @@ def synthesize(
     if resolved_backend == 'say':
         return _backend_say(text)
     raise ValueError(f"Unknown TTS backend: {resolved_backend!r}")
+
+
+def active_backend() -> str:
+    """Resolve which backend 'auto' would pick (for startup logging/checks)."""
+    if config.TTS_BACKEND != 'auto':
+        return config.TTS_BACKEND
+    if config.ELEVENLABS_API_KEY:
+        return 'elevenlabs'
+    if config.OPENAI_API_KEY:
+        return 'openai'
+    if _kokoro_available():
+        return 'kokoro'
+    if _piper_available():
+        return 'piper'
+    return 'say'
+
+
+def check() -> bool:
+    """Verify the active backend's credentials at startup. Returns True if OK
+    (or if the backend needs no check). Logs the chosen backend."""
+    backend = active_backend()
+    log.info(f"TTS backend: {backend}")
+    if backend == 'elevenlabs':
+        return check_elevenlabs()
+    if backend == 'openai':
+        return check_openai()
+    return True

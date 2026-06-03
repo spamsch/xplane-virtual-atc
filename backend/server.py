@@ -83,6 +83,7 @@ _start_time: float = 0.0
 _prev_ptt: bool = False          # last broadcast PTT state (de-dupe spurious ends)
 _ptt_listener: Optional[PTTListener] = None   # WebSocket PTT edge listener
 _tx_lock: Optional[asyncio.Lock] = None   # serialise concurrent LLM calls
+_loop: Optional[asyncio.AbstractEventLoop] = None   # main loop (for thread-safe scheduling)
 
 MAX_AUDIO_BYTES = 2 * 1024 * 1024   # 2 MB ≈ 62 s at 16 kHz 16-bit mono
 ACF_TAILNUM_BYTES = 40              # sim/aircraft/view/acf_tailnum is char[40]
@@ -435,6 +436,27 @@ async def _on_ptt_change(pressed: bool):
         await _broadcast("ptt_end")
 
 
+async def _start_ptt_listener():
+    """Start the WebSocket PTT listener if configured and not already running.
+
+    Tied to the X-Plane connection: started on connect, stopped on disconnect,
+    so it never spins retrying discovery against a sim that isn't there.
+    """
+    global _ptt_listener
+    if (not config.XPLANE_PTT_DATAREF or _source != "xplane"
+            or _ptt_listener is not None):
+        return
+    # Auto-detects whether XPLANE_PTT_DATAREF names a command
+    # (sim/operation/contact_atc_ptt) or a readable dataref (xpilot/ptt).
+    _ptt_listener = PTTListener(
+        host=config.XPLANE_IP,
+        port=config.XPLANE_REST_PORT,
+        ptt_source=config.XPLANE_PTT_DATAREF,
+        on_change=_on_ptt_change,
+    )
+    _ptt_listener.start()
+
+
 async def _stop_ptt_listener():
     global _ptt_listener
     if _ptt_listener is not None:
@@ -442,8 +464,27 @@ async def _stop_ptt_listener():
         _ptt_listener = None
 
 
+def _schedule(coro):
+    """Run a coroutine on the main loop from a connector background thread."""
+    if _loop is not None and _loop.is_running():
+        asyncio.run_coroutine_threadsafe(coro, _loop)
+    else:
+        coro.close()   # loop gone — drop it without a 'never awaited' warning
+
+
+def _on_xplane_connected():
+    """Connector callback (background thread) — X-Plane REST API reachable."""
+    _schedule(_start_ptt_listener())
+
+
+def _on_xplane_disconnected():
+    """Connector callback (background thread) — X-Plane went away."""
+    log.info("X-Plane disconnected — stopping PTT listener")
+    _schedule(_stop_ptt_listener())
+
+
 async def _set_source(source: str):
-    global _source, _prev_ptt, _ptt_listener
+    global _source, _prev_ptt
     # Reset PTT state so we don't emit a spurious ptt_end if the previous
     # source had PTT active at the moment of the switch.
     await _stop_ptt_listener()
@@ -455,23 +496,16 @@ async def _set_source(source: str):
         connector = XPlaneRestConnector(
             host=config.XPLANE_IP,
             port=config.XPLANE_REST_PORT,
+            on_connected=_on_xplane_connected,
+            on_disconnected=_on_xplane_disconnected,
         )
         connector.start()
         global _driver
         _driver = connector
         _source = "xplane"
-
-        # Low-latency PTT over the X-Plane WebSocket (auto-detects whether the
-        # configured name is a command like sim/operation/contact_atc_ptt or a
-        # readable dataref like xpilot/ptt). Replaces 2 Hz polled detection.
-        if config.XPLANE_PTT_DATAREF:
-            _ptt_listener = PTTListener(
-                host=config.XPLANE_IP,
-                port=config.XPLANE_REST_PORT,
-                ptt_source=config.XPLANE_PTT_DATAREF,
-                on_change=_on_ptt_change,
-            )
-            _ptt_listener.start()
+        # PTT listener is started by _on_xplane_connected once the connector
+        # confirms the REST API is reachable, and stopped on disconnect — so it
+        # doesn't loop retrying discovery while X-Plane is down.
 
         await _broadcast("source_change", source="xplane", scenario_name=None)
         log.info(f"Switched to X-Plane REST source ({config.XPLANE_IP}:{config.XPLANE_REST_PORT})")
@@ -688,9 +722,10 @@ def _find_apt_dat() -> Path:
 
 
 async def run():
-    global _airport_db, _driver, _start_time, _tx_lock
+    global _airport_db, _driver, _start_time, _tx_lock, _loop
     _start_time = time.time()
     _tx_lock    = asyncio.Lock()
+    _loop       = asyncio.get_running_loop()   # for thread-safe scheduling from connector callbacks
 
     logging.basicConfig(level=logging.INFO,
                         format="%(levelname)s %(name)s: %(message)s")
@@ -704,9 +739,8 @@ async def run():
 
     # Pre-load Whisper model so the first PTT press isn't delayed by a 3 GB download
     if _AUDIO_READY:
-        await asyncio.to_thread(_audio_stt.preload)   # STT: loads model or checks OpenAI key
-        if config.OPENAI_API_KEY:
-            await asyncio.to_thread(_audio_tts.check_openai)   # TTS: verify key
+        await asyncio.to_thread(_audio_stt.preload)   # STT: loads model or verifies cloud key
+        await asyncio.to_thread(_audio_tts.check)     # TTS: log backend + verify key
 
     # Start idle — the probe loop will auto-detect X-Plane within 2 s.
     # Scenarios can still be loaded manually via the UI's scenario drawer.

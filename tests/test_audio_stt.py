@@ -134,6 +134,47 @@ class TestTranscribeOpenAI:
         assert transcribe(_wav()) == "trimmed"
 
 
+# ──────────────────────── ElevenLabs backend (transcribe) ────────────────────
+
+class _FakeResp:
+    def __init__(self, data: bytes):
+        self._data = data
+    def read(self):
+        return self._data
+    def __enter__(self):
+        return self
+    def __exit__(self, *exc):
+        return False
+
+
+class TestTranscribeElevenLabs:
+
+    @patch('audio.stt._active_backend', return_value='elevenlabs')
+    @patch('audio.stt._transcribe_elevenlabs', return_value="Hannover Tower")
+    def test_routes_to_elevenlabs(self, mock_el, _):
+        from audio.stt import transcribe
+        assert transcribe(_wav(), callsign="D-EIYD") == "Hannover Tower"
+        mock_el.assert_called_once()
+
+    def test_parses_text_field_and_sends_model(self):
+        import json, config as _cfg
+        captured = {}
+        def fake_urlopen(req, timeout=None):
+            captured['url'] = req.full_url
+            captured['key'] = req.headers.get('Xi-api-key')
+            captured['body'] = req.data
+            return _FakeResp(json.dumps({"text": "D-EIYD ready for departure"}).encode())
+        with patch('audio.stt.urllib.request.urlopen', side_effect=fake_urlopen), \
+             patch.object(_cfg, 'ELEVENLABS_API_KEY', 'sk_el'), \
+             patch.object(_cfg, 'ELEVENLABS_STT_MODEL', 'scribe_v1'):
+            from audio.stt import _transcribe_elevenlabs
+            text = _transcribe_elevenlabs(_wav(), callsign="D-EIYD")
+        assert text == "D-EIYD ready for departure"
+        assert captured['url'].endswith('/v1/speech-to-text')
+        assert captured['key'] == 'sk_el'
+        assert b'scribe_v1' in captured['body']
+
+
 # ─────────────────────── backend selection (_active_backend) ─────────────────
 
 class TestActiveBackend:
@@ -141,14 +182,25 @@ class TestActiveBackend:
     @patch('audio.stt.config')
     def test_openai_when_key_set(self, mock_cfg):
         mock_cfg.OPENAI_API_KEY = 'sk-test'
+        mock_cfg.ELEVENLABS_API_KEY = ''
         import os
         with patch.dict(os.environ, {'STT_BACKEND': 'auto'}):
             from audio.stt import _active_backend
             assert _active_backend() == 'openai'
 
     @patch('audio.stt.config')
+    def test_elevenlabs_preferred_when_key_set(self, mock_cfg):
+        mock_cfg.ELEVENLABS_API_KEY = 'sk_el'
+        mock_cfg.OPENAI_API_KEY = 'sk-test'
+        import os
+        with patch.dict(os.environ, {'STT_BACKEND': 'auto'}):
+            from audio.stt import _active_backend
+            assert _active_backend() == 'elevenlabs'
+
+    @patch('audio.stt.config')
     def test_local_when_no_key(self, mock_cfg):
         mock_cfg.OPENAI_API_KEY = ''
+        mock_cfg.ELEVENLABS_API_KEY = ''
         import os
         with patch.dict(os.environ, {'STT_BACKEND': 'auto'}):
             from audio.stt import _active_backend

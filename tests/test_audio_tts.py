@@ -99,6 +99,58 @@ class TestBackendSay:
         assert len(cleaned) >= 1
 
 
+# ─────────────────────────── ElevenLabs backend ──────────────────────────────
+
+class _FakeResp:
+    def __init__(self, data: bytes):
+        self._data = data
+    def read(self):
+        return self._data
+    def __enter__(self):
+        return self
+    def __exit__(self, *exc):
+        return False
+
+
+class TestBackendElevenLabs:
+
+    def test_pcm_decoded_to_float32(self):
+        # Two int16 samples → normalized float32, sr 24000
+        pcm = np.array([16384, -16384], dtype='<i2').tobytes()
+        with patch('audio.tts.urllib.request.urlopen', return_value=_FakeResp(pcm)), \
+             patch.object(__import__('config'), 'ELEVENLABS_API_KEY', 'sk_el'):
+            from audio.tts import _backend_elevenlabs
+            samples, sr = _backend_elevenlabs("Tower, ready", "voice123")
+        assert sr == 24_000
+        assert samples.dtype == np.float32
+        assert np.allclose(samples, [0.5, -0.5], atol=1e-3)
+
+    def test_request_targets_voice_and_model(self):
+        captured = {}
+        def fake_urlopen(req, timeout=None):
+            captured['url'] = req.full_url
+            captured['key'] = req.headers.get('Xi-api-key')
+            captured['body'] = req.data
+            return _FakeResp(b'\x00\x00')
+        import config as _cfg
+        with patch('audio.tts.urllib.request.urlopen', side_effect=fake_urlopen), \
+             patch.object(_cfg, 'ELEVENLABS_API_KEY', 'sk_el'), \
+             patch.object(_cfg, 'ELEVENLABS_TTS_MODEL', 'eleven_flash_v2_5'):
+            from audio.tts import _backend_elevenlabs
+            _backend_elevenlabs("Cleared for takeoff", "myVoiceId")
+        assert 'text-to-speech/myVoiceId' in captured['url']
+        assert 'output_format=pcm_24000' in captured['url']
+        assert captured['key'] == 'sk_el'
+        assert b'eleven_flash_v2_5' in captured['body']
+
+    def test_raises_without_key(self):
+        import config as _cfg
+        with patch.object(_cfg, 'ELEVENLABS_API_KEY', ''):
+            from audio.tts import _backend_elevenlabs
+            with pytest.raises(RuntimeError, match='ELEVENLABS_API_KEY'):
+                _backend_elevenlabs("x", "v")
+
+
 # ─────────────────────────── synthesize (public API) ─────────────────────────
 
 class TestSynthesize:
@@ -109,6 +161,7 @@ class TestSynthesize:
     @patch('audio.tts._backend_say')
     def test_auto_falls_back_to_say(self, mock_say, _piper, _kokoro, mock_cfg):
         mock_cfg.OPENAI_API_KEY = ''
+        mock_cfg.ELEVENLABS_API_KEY = ''
         mock_cfg.TTS_BACKEND = 'auto'
         mock_cfg.TTS_VOICE = 'onyx'
         mock_say.return_value = (np.zeros(100, dtype=np.float32), 22_050)
@@ -123,6 +176,7 @@ class TestSynthesize:
     @patch('audio.tts._backend_piper')
     def test_auto_prefers_piper_over_say(self, mock_piper, _piper, _kokoro, mock_cfg):
         mock_cfg.OPENAI_API_KEY = ''
+        mock_cfg.ELEVENLABS_API_KEY = ''
         mock_cfg.TTS_BACKEND = 'auto'
         mock_cfg.TTS_VOICE = 'en_US-lessac-high'
         mock_piper.return_value = (np.zeros(100, dtype=np.float32), 22_050)
@@ -135,6 +189,7 @@ class TestSynthesize:
     @patch('audio.tts._backend_kokoro')
     def test_auto_prefers_kokoro_over_piper(self, mock_kokoro, _kokoro, mock_cfg):
         mock_cfg.OPENAI_API_KEY = ''
+        mock_cfg.ELEVENLABS_API_KEY = ''
         mock_cfg.TTS_BACKEND = 'auto'
         mock_cfg.TTS_VOICE = 'am_adam'
         mock_kokoro.return_value = (np.zeros(100, dtype=np.float32), 24_000)
@@ -146,12 +201,28 @@ class TestSynthesize:
     @patch('audio.tts._backend_openai')
     def test_auto_prefers_openai_when_key_set(self, mock_openai, mock_cfg):
         mock_cfg.OPENAI_API_KEY = 'sk-test'
+        mock_cfg.ELEVENLABS_API_KEY = ''
         mock_cfg.TTS_BACKEND = 'auto'
         mock_cfg.TTS_VOICE = 'onyx'
         mock_openai.return_value = (np.zeros(100, dtype=np.float32), 24_000)
         from audio.tts import synthesize
         synthesize("test", backend='auto')
         mock_openai.assert_called_once()
+
+    @patch('audio.tts.config')
+    @patch('audio.tts._backend_elevenlabs')
+    def test_auto_prefers_elevenlabs_when_key_set(self, mock_el, mock_cfg):
+        # ElevenLabs wins over OpenAI in auto when both keys are present.
+        mock_cfg.ELEVENLABS_API_KEY = 'sk_el'
+        mock_cfg.OPENAI_API_KEY = 'sk-test'
+        mock_cfg.ELEVENLABS_VOICE_ID = 'voice123'
+        mock_cfg.TTS_BACKEND = 'auto'
+        mock_cfg.TTS_VOICE = 'onyx'
+        mock_el.return_value = (np.zeros(100, dtype=np.float32), 24_000)
+        from audio.tts import synthesize
+        synthesize("test", backend='auto')
+        # Uses the ElevenLabs voice id, not the generic TTS_VOICE
+        mock_el.assert_called_once_with("test", 'voice123')
 
     @patch('audio.tts._backend_kokoro')
     def test_explicit_kokoro_backend(self, mock_kokoro):
