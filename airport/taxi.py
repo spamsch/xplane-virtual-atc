@@ -105,6 +105,23 @@ def _hold_nodes(airport: Airport, runway: str) -> set[int]:
     return holds
 
 
+def _threshold(airport: Airport, runway: str) -> Optional[tuple]:
+    """(lat, lon) of the named runway end, e.g. the 27R threshold — so a
+    departure is routed to the correct end, not just any hold on the strip."""
+    want = _runway_tokens(runway)
+    for r in airport.runways:
+        if r.name1.upper() in want:
+            return (r.lat1, r.lon1)
+        if r.name2.upper() in want:
+            return (r.lat2, r.lon2)
+    return None
+
+
+# Hold nodes within this distance of the cleared threshold form the
+# "departure end" cluster; holds elsewhere on the runway are excluded.
+_THRESHOLD_CLUSTER_M = 350.0
+
+
 def _nearest_node(airport: Airport, lat: float, lon: float) -> Optional[int]:
     best, best_d = None, math.inf
     for nid, n in airport.taxi_nodes.items():
@@ -128,6 +145,19 @@ def compute_route(airport: Airport, lat: float, lon: float,
     goals = _hold_nodes(airport, runway)
     if not goals:
         return None
+
+    # Restrict goals to the cleared runway's threshold end. Hold nodes are tagged
+    # with the runway *pair* (e.g. "09L,27R") and run the whole length, so without
+    # this a "27R" clearance could route to the 09L end. Dijkstra then picks the
+    # apron-side node of that cluster (shortest taxi path, no runway crossing).
+    thr = _threshold(airport, runway)
+    if thr:
+        nodes = airport.taxi_nodes
+        near = {n for n in goals
+                if _haversine_m(thr[0], thr[1], nodes[n].lat, nodes[n].lon)
+                <= _THRESHOLD_CLUSTER_M}
+        if near:
+            goals = near
 
     adj = _build_adjacency(airport)
 

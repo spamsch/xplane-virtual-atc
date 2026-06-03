@@ -92,6 +92,13 @@ class TestRouting:
         r = taxi.compute_route(airport, 52.46010, 9.69010, "09/27")
         assert r is not None and r.taxiways == ["A", "B"]
 
+    def test_threshold_resolves_named_end(self, airport):
+        # The fix that sends a "27" clearance to the 27 end, not just any hold:
+        # _threshold must return the coords of the specifically-named runway end.
+        assert taxi._threshold(airport, "27") == pytest.approx((52.46010, 9.69010))
+        assert taxi._threshold(airport, "09") == pytest.approx((52.46010, 9.69200))
+        assert taxi._threshold(airport, "16") is None
+
     def test_unknown_runway_returns_none(self, airport):
         assert taxi.compute_route(airport, 52.46010, 9.69010, "16") is None
 
