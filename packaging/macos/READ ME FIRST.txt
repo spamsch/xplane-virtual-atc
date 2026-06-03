@@ -25,15 +25,27 @@ What you need
 
 First time — do this once
 -------------------------
-1. Right-click  setup.command  and choose  Open.
-   (Right-click → Open is needed only the first time, because the file was
-   downloaded from the internet. A normal double-click would be blocked.)
+macOS blocks this folder the first time because it was downloaded from the
+internet and isn't signed. Double-clicking (or right-click → Open) won't work
+on setup.command yet — so run it from Terminal once. It's easier than it sounds:
 
-2. A black window opens and installs the tools. It may ask for your Mac
-   password once. When it says so, type  claude  and press Return to sign in
-   to Claude in your browser, then type  exit.
+1. Open Terminal:
+   Press Command (⌘) + Spacebar, type  Terminal, and press Return.
+   A plain window with a text prompt opens.
 
-3. Close the window.
+2. Drag the  setup.command  file from this folder into the Terminal window,
+   then press Return.
+   (Dragging it just types its location for you — no commands to memorise.)
+
+3. Terminal installs the tools. It may ask for your Mac password once. When it
+   says so, type  claude  and press Return to sign in to Claude in your
+   browser, then type  exit  and press Return.
+
+4. Close Terminal.
+
+That's the only time you need Terminal. setup.command removes the "downloaded
+from the internet" block from the app and from start.command, so from now on a
+normal double-click on start.command just works.
 
 
 Every time after that — fly
@@ -54,7 +66,9 @@ If something doesn't work
 -------------------------
 - "Backend offline" in the app: make sure the black start.command window is
   still open. If you just started, give it a few seconds to connect.
-- The app won't open / "unidentified developer": run  setup.command  once
-  (right-click → Open) — it clears the download flag for everything here.
+- The app won't open / "unidentified developer", or start.command won't run:
+  you haven't run setup.command yet. Do the "First time" steps above (drag
+  setup.command into Terminal, press Return) — it clears the download block on
+  the app and start.command.
 - ATC stays silent: open the app's Settings and check that Claude shows a
   green check. If not, open the start window, type  claude, sign in, exit.

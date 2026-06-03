@@ -1,12 +1,17 @@
 #!/bin/bash
-# Run this ONCE, the first time: right-click this file and choose Open.
-# It installs the tools the app needs. Safe to run again later.
+# Run this ONCE, the first time, from Terminal: open Terminal, drag this file
+# into the window, and press Return. (An unsigned .command can't be launched by
+# double-click or right-click → Open until its quarantine flag is cleared, which
+# is exactly what this script does below.) Safe to run again later.
 
 cd "$(dirname "$0")" || exit 1
 
-# Clear the macOS download quarantine on this whole folder (incl. the app and
-# start.command) so nothing gets blocked by Gatekeeper from now on.
+# Remove the macOS "downloaded from the internet" quarantine so Gatekeeper stops
+# blocking things. Clear the whole folder, and — explicitly — the app and
+# start.command, so a normal double-click on start.command works from now on.
 xattr -dr com.apple.quarantine . >/dev/null 2>&1 || true
+xattr -dr com.apple.quarantine "X-Plane Virtual ATC.app" >/dev/null 2>&1 || true
+xattr -dr com.apple.quarantine "start.command" >/dev/null 2>&1 || true
 
 echo "────────────────────────────────────────────────────────"
 echo "  X-Plane Virtual ATC — Setup"

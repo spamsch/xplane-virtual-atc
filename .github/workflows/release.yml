@@ -62,7 +62,7 @@ jobs:
             ## Download & run (macOS)
 
             1. Download `X-Plane-Virtual-ATC-macOS.zip` below and unzip it.
-            2. Open the folder, **right-click `setup.command` → Open** (once — installs Python and Claude).
+            2. **Run `setup.command` from Terminal, once.** The download is unsigned, so double-click and right-click → Open are blocked. Open **Terminal** (⌘-Space → `Terminal`), then **drag `setup.command` into the window and press Return**. It installs Python + Claude and clears the macOS block on the app and `start.command`.
             3. From then on, double-click **`start.command`** to fly.
 
             See `READ ME FIRST.txt` inside the zip for details.

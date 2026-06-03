@@ -27,8 +27,8 @@ The defaults are built around two paid/account services. Both are required for t
 A prebuilt macOS app is published on the [Releases page](https://github.com/spamsch/xplane-virtual-atc/releases). It includes the desktop app already built — no Node, Rust, or building required.
 
 1. Download `X-Plane-Virtual-ATC-macOS.zip` from the latest release and unzip it.
-2. **Right-click `setup.command` → Open** (just the first time — it installs Python and Claude, may ask for your Mac password). When it's done, type `claude` to sign in, then `exit`.
-3. From then on, double-click **`start.command`**. The app window opens on its own; keep the small black window open while you fly, and quit the app to stop.
+2. **Run `setup.command` from Terminal — once.** Because the download is unsigned, macOS blocks double-click *and* right-click → Open on it. Instead: open **Terminal** (press ⌘-Space, type `Terminal`, Return), then **drag `setup.command` into the Terminal window and press Return**. It installs Python and Claude (may ask for your Mac password); when prompted, type `claude` to sign in, then `exit`. This also clears the macOS block on the app and on `start.command`.
+3. From then on, just **double-click `start.command`**. The app window opens on its own; keep the small black window open while you fly, and quit the app to stop.
 
 `READ ME FIRST.txt` in the zip has the same steps plus troubleshooting. You still need everything under [What you need](#what-you-need) above — a Claude subscription and an ElevenLabs key (with the permissions listed there), which you paste into the app's Settings.
 
@@ -39,7 +39,7 @@ Prefer to run from source, or on another platform? Same requirements as [What yo
 **Install it once:**
 
 1. **Download the app.** At the top of [this page](https://github.com/spamsch/xplane-virtual-atc), click the green **Code** button → **Download ZIP**. Double-click the downloaded ZIP to unpack it, and open the new folder.
-2. **Double-click `setup.command`.** If macOS says it's *"from an unidentified developer,"* **right-click** (or Control-click) the file → **Open** → **Open**. A black window opens and installs everything — it may ask for your Mac password and take a few minutes. Wait until it says **"App ready."**
+2. **Run `setup.command` from Terminal.** A downloaded ZIP is unsigned, so macOS blocks double-click and right-click → Open. Open **Terminal** (⌘-Space, type `Terminal`, Return), then **drag `setup.command` into the window and press Return**. A black window installs everything — it may ask for your Mac password and take a few minutes. Wait until it says **"App ready."**
 3. **Sign in to Claude.** In that same black window, type `claude` and press Return, follow the sign-in that opens in your browser, then type `exit` and press Return.
 4. **Get your ElevenLabs key.** Go to [elevenlabs.io/app/developers/api-keys](https://elevenlabs.io/app/developers/api-keys), sign in, click **Create API key**, and grant it **Text to Speech**, **Speech to Text**, and **User: read** (or leave it unrestricted) — see [What you need](#what-you-need). Copy the key.
 
@@ -51,7 +51,7 @@ Prefer to run from source, or on another platform? Same requirements as [What yo
 4. **Talk to ATC:** hold the **PTT** button on screen (or hold the **Spacebar**) and speak. Let go to send. Your browser will ask to use the microphone the first time — click **Allow**.
 
 **Trouble?**
-- *"can't be opened / unidentified developer"* → right-click the `.command` file and choose **Open** (only needed once).
+- *"can't be opened" / "unidentified developer", or `start.command` won't run* → you haven't run `setup.command` yet. Open Terminal, drag `setup.command` in, press Return (right-click → Open does **not** work on unsigned `.command` files). It clears the block on the app and `start.command`.
 - *The Settings screen won't go green* → it lists what's missing (Claude, voice key, or X-Plane path). Fix that item; the X-Plane path field lets you point at your install if it isn't the default.
 - *No controller voice* → make sure you pasted the ElevenLabs key in Settings.
 
