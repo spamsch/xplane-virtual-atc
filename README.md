@@ -2,7 +2,7 @@
 
 **Talk to a real-sounding air traffic controller while you fly [X-Plane 12](https://www.x-plane.com/).** Hold a button, say what you'd say on the radio, and a controller — powered by Claude — answers in a proper radio voice: taxi clearances, the runway in use, frequency handoffs, squawk codes, the works. It reads your actual position, altitude, and radios from the sim, and knows the real layout of the airport you're at.
 
-![X-Plane Virtual ATC](docs/screenshot.png)
+![X-Plane Virtual ATC — a live Hannover Ground exchange in the Technical theme](docs/app-running.png)
 
 ## What you need
 
@@ -31,6 +31,10 @@ A prebuilt macOS app is published on the [Releases page](https://github.com/spam
 3. From then on, just **double-click `start.command`**. The app window opens on its own; keep the small black window open while you fly, and quit the app to stop.
 
 `READ ME FIRST.txt` in the zip has the same steps plus troubleshooting. You still need everything under [What you need](#what-you-need) above — a Claude subscription and an ElevenLabs key (with the permissions listed there), which you paste into the app's Settings.
+
+On first launch the app opens its **Settings** screen — a live checklist that shows exactly what's still needed and where to paste your ElevenLabs key:
+
+![First-run Settings — the checklist shows what's configured and what's missing](docs/setup.png)
 
 ## Build it yourself (Mac — from source)
 
