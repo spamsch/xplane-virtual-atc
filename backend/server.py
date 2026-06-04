@@ -12,6 +12,9 @@ Server → client event types:
   airport_detected icao, name, elevation_ft, runways[], frequencies[]
   atc_message      role ("pilot"|"atc"), text, model, timestamp
   atc_audio        audio (base64 WAV), text, model, timestamp  [if AUDIO_ENABLED]
+  ambient_audio    audio (base64 WAV), speaker ("pilot"|"atc"), text, callsign,
+                   kind ("ambient"|"interjection")             [ambient party-line traffic]
+  ambient_stop     (no payload) — cut any in-flight ambient audio now (you keyed up)
   transcription    text                                        [if AUDIO_ENABLED]
   ptt_start        (no payload) — X-Plane PTT button pressed  [if XPLANE_PTT_DATAREF set]
   ptt_end          (no payload) — X-Plane PTT button released [if XPLANE_PTT_DATAREF set]
@@ -29,13 +32,19 @@ Client → server message types:
   load_scenario       scenario (dict matching Scenario.to_dict())
   set_source          source ("xplane"|"simulated")
   set_config          config {elevenlabs_api_key?, openai_api_key?, xplane_path?, xplane_ptt_dataref?}
+  set_ambient         level ("off"|"light"|"medium"|"heavy"), rules? (["VFR","IFR"])
+  mic_open            (no payload) — pilot keyed the mic (suppress ambient)
+  mic_close           (no payload) — pilot released the mic
   get_config_status   (no payload) — request a fresh config_status
 """
 
 import asyncio
 import base64
+import hashlib
 import json
 import logging
+import math
+import random
 import shutil
 import sys
 import time
@@ -54,7 +63,12 @@ from airport.parser import parse_apt_dat, Airport
 from airport.database import AirportDB
 from atc import engine as atc_engine
 from atc.parser import parse as parse_radio_call
-from atc.session import ATCSession
+from atc.session import ATCSession, Station
+from traffic.library import (
+    load_library, classify_size, render as _render_interaction,
+    RenderContext, InteractionLibrary,
+)
+from traffic.ambient import AmbientPlanner
 from xplane.connector import FlightState
 from xplane.rest_connector import XPlaneRestConnector, encode_fixed_string
 from xplane.ptt_listener import PTTListener
@@ -141,6 +155,14 @@ _xplane_connected: bool = False  # is the X-Plane REST API actually reachable ri
 _airport_db_loading: bool = False   # apt.dat parse in progress (deferred until configured)
 _startup_vfr_done: bool = False     # VFR_WEATHER_ON_START applied once this run
 
+# ── Ambient traffic ("party line") state ─────────────────────────────────────
+_ambient_lib: Optional[InteractionLibrary] = None   # the interaction library
+_ambient_planner: Optional[AmbientPlanner] = None    # level → timing/probability
+_ambient_size: Optional[str] = None      # current airport size (small|medium|large)
+_ambient_rng = random.Random()           # selection + callsign variety
+_channel_lock: Optional[asyncio.Lock] = None   # half-duplex radio: one TX at a time
+_user_speaking: bool = False             # pilot is keying the mic → no traffic
+
 MAX_AUDIO_BYTES = 2 * 1024 * 1024   # 2 MB ≈ 62 s at 16 kHz 16-bit mono
 ACF_TAILNUM_BYTES = 40              # sim/aircraft/view/acf_tailnum is char[40]
 
@@ -223,6 +245,313 @@ async def _send_to(ws: WebSocketServerProtocol, msg_type: str, **data):
 
 
 # ------------------------------------------------------------------ #
+# Ambient traffic — the party line
+#
+# A VHF frequency is half-duplex: one aircraft transmits at a time. We model
+# that with a single channel lock through which BOTH the real controller reply
+# and the ambient traffic play, so nothing ever keys over anything else. The
+# ambient loop schedules other-aircraft exchanges at a cadence set by the level
+# (light/medium/heavy), matched to the frequency type you're tuned to and the
+# airport's size, and goes silent the instant you key the mic.
+
+async def _play_on_channel(samples, sr: int, *, event: str, **meta):
+    """Encode + broadcast one radio clip, holding the (half-duplex) channel for
+    its duration so the next transmission waits its turn. Used by both the real
+    controller reply and the ambient traffic."""
+    wav = _audio_radio.encode_wav(samples, sr)
+    duration = len(samples) / float(sr) if sr else 0.0
+    assert _channel_lock is not None
+    async with _channel_lock:
+        await _broadcast(event, audio=base64.b64encode(wav).decode(), **meta)
+        # Hold the frequency for the clip length (+ a beat of squelch tail).
+        await asyncio.sleep(duration + 0.15)
+
+
+def _tuned_station() -> Optional[Station]:
+    """Which ATC station the live COM1 is tuned to, matched against the airport's
+    published frequencies. Falls back to the session's current station when the
+    dial doesn't match anything (or we have no live radio)."""
+    if _session is None:
+        return None
+    if _source == "xplane" and _driver is not None:
+        try:
+            com1 = _driver.state.com1_mhz
+        except Exception:
+            com1 = 0.0
+        if com1:
+            # COM1 is readable: trust the dial. A match gives the station; no
+            # match returns None — which, when airborne, reads as "en route"
+            # (you've tuned away from this airport's controllers).
+            return _session._station_from_freq(com1)
+    # COM1 unreadable → fall back to where the session thinks we are.
+    return _session.current_station
+
+
+def _ambient_active() -> bool:
+    """All the gates that must be open for any ambient traffic to play."""
+    return (
+        _AUDIO_READY
+        and _ambient_planner is not None and _ambient_planner.enabled
+        and _source == "xplane" and _xplane_connected
+        and _session is not None
+        and not _user_speaking
+        and _thinking_count == 0
+    )
+
+
+def _ambient_plan():
+    """Resolve the current situation into a library query + render context.
+
+    Returns (station_name, size, enroute, rules, RenderContext) or None when
+    nothing sensible can be said (e.g. no session yet)."""
+    if _session is None:
+        return None
+
+    st = _tuned_station()
+    airborne = False
+    if _driver is not None:
+        try:
+            s = _driver.state
+            airborne = s.is_flight_loaded and s.on_ground < 0.5
+        except Exception:
+            airborne = False
+
+    # En route = airborne and tuned to an information/radar service (or nothing
+    # the airport recognises). En route is VFR-only, always, and has no airport.
+    enroute = airborne and st in (Station.FIS, Station.RADAR, None)
+    if enroute:
+        station_name = "fis"
+        size = None
+        rules = ["VFR"]
+        atc_callsign = "Information"
+    else:
+        if st is None:
+            st = _session.current_station
+        station_name = _AMBIENT_STATION_NAME.get(st)
+        if station_name is None:
+            return None
+        size = _ambient_size
+        rules = list(config.AMBIENT_TRAFFIC_RULES)
+        # Name the controller from the station the pilot is actually tuned to —
+        # not the session's current station, which can lag a dial change.
+        city = _current_airport.name.split()[0] if _current_airport else ""
+        atc_callsign = f"{city} {_AMBIENT_STATION_LABEL.get(st, 'Radio')}".strip()
+
+    # Fill the render context with sensible fallbacks so a template never leaves
+    # a dangling word ("cleared to land runway ,").
+    icao = _current_airport.icao if _current_airport else None
+    raw = (_session.conditions.get(icao) or {}) if icao else {}
+
+    runway = str(raw.get("active_runway", "") or "").strip()
+    if (not runway or runway.lower() == "unknown") and _current_airport and _current_airport.runways:
+        runway = _current_airport.runways[0].name1
+    if enroute:
+        runway = ""   # no runway en route
+
+    qnh = raw.get("qnh")
+    qnh = str(qnh) if qnh not in (None, "", "?") else "1013"
+
+    wd, wk = raw.get("wind_dir"), raw.get("wind_kts")
+    wind = f"{wd} degrees {wk} knots" if wd not in (None, "", "?") and wk not in (None, "", "?") else ""
+
+    ctx = RenderContext(
+        atc_callsign=atc_callsign,
+        runway=runway,
+        qnh=qnh,
+        wind=wind,
+        airport=(_current_airport.name.split()[0] if _current_airport else ""),
+    )
+    return station_name, size, enroute, rules, ctx
+
+
+def _render(interaction, ctx):
+    return _render_interaction(interaction, ctx, _ambient_rng)
+
+
+def _pilot_voice_pool() -> list:
+    """The voices other traffic draws from. An explicit AMBIENT_PILOT_VOICES wins;
+    otherwise pick a default pool that matches the active TTS backend (ElevenLabs
+    gets 10 distinct voices, OpenAI its six). Backends without a usable pool
+    (say/kokoro/piper) return [] → we vary pitch on the controller voice instead."""
+    if config.AMBIENT_PILOT_VOICES:
+        return config.AMBIENT_PILOT_VOICES
+    backend = _audio_tts.active_backend()
+    if backend == "elevenlabs":
+        return config.ELEVENLABS_PILOT_POOL
+    if backend == "openai":
+        return config.OPENAI_PILOT_POOL
+    return []
+
+
+def _ambient_voice_and_profile(callsign: str, speaker: str):
+    """(voice, radio_profile, pitch_semitones) for one ambient line.
+
+    Controller lines reuse your configured controller voice and the default
+    radio — it's the same controller you're talking to. Other pilots get a voice
+    drawn from the pool (see _pilot_voice_pool) plus a distinct radio character —
+    all seeded off the callsign so a given aircraft sounds like one consistent
+    station across its read-backs. With no usable pool, we vary the controller
+    voice's pitch instead so traffic still sounds like different people."""
+    import numpy as np
+    if speaker == "atc":
+        return None, _audio_radio.DEFAULT_PROFILE, 0.0
+    seed = int(hashlib.sha1(callsign.encode()).hexdigest()[:8], 16)
+    rng = random.Random(seed)
+    profile = _audio_radio.random_profile(np.random.default_rng(seed))
+    pool = _pilot_voice_pool()
+    if pool:
+        return rng.choice(pool), profile, 0.0
+    return None, profile, rng.uniform(-2.2, 2.2)   # vary pitch when no voice pool
+
+
+def _synth_line(text: str, voice, profile, pitch: float):
+    """Blocking: normalise → TTS → (pitch) → radio FX. Run via to_thread."""
+    spoken = _radio_text.to_spoken(text)
+    samples, sr = _audio_tts.synthesize(spoken, voice=voice)
+    if pitch:
+        samples = _audio_radio.pitch_shift(samples, pitch)
+    samples = _audio_radio.apply_radio_fx(samples, sr, profile=profile)
+    return samples, sr
+
+
+async def _play_rendered(rendered, *, kind: str) -> bool:
+    """Synthesize and play each line of a rendered interaction in turn, bailing
+    the instant the pilot keys up. Returns True if it ran to completion."""
+    for i, line in enumerate(rendered.lines):
+        if _user_speaking:
+            return False
+        voice, profile, pitch = _ambient_voice_and_profile(rendered.callsign, line.speaker)
+        try:
+            samples, sr = await asyncio.to_thread(_synth_line, line.text, voice, profile, pitch)
+        except Exception as e:
+            log.debug(f"Ambient synth failed ({rendered.interaction.id}): {e}")
+            return False
+        if _user_speaking:
+            return False
+        await _play_on_channel(
+            samples, sr, event="ambient_audio",
+            speaker=line.speaker, text=line.text,
+            callsign=rendered.callsign, kind=kind,
+            interaction_id=rendered.interaction.id,
+        )
+        if i < len(rendered.lines) - 1:
+            await asyncio.sleep(_ambient_planner.inter_line_gap())
+    return True
+
+
+async def _maybe_interject():
+    """After the pilot transmits, sometimes work one other aircraft before
+    turning back to them. Called inside the transmission lock, before the real
+    reply is broadcast, so the chat reads: pilot → other traffic → your reply."""
+    if not _AUDIO_READY or _ambient_planner is None or not _ambient_planner.enabled:
+        return
+    if _source != "xplane" or not _xplane_connected or _session is None:
+        return
+    if not _ambient_planner.should_interject():
+        return
+    plan = _ambient_plan()
+    if not plan:
+        return
+    station_name, size, enroute, rules, ctx = plan
+    it = _ambient_lib.pick(station=station_name, size=size, enroute=enroute,
+                           rules=rules, rng=_ambient_rng) if _ambient_lib else None
+    if it is None:
+        return
+    rendered = _render(it, ctx)
+    if rendered.lines:
+        log.info(f"Ambient interjection before reply: {it.id} ({rendered.callsign})")
+        await _play_rendered(rendered, kind="interjection")
+
+
+async def _ambient_loop():
+    """Schedule ambient interactions at the level's cadence. Runs forever; every
+    gate is re-checked right before anything is said, so toggling the level,
+    keying the mic, or losing the X-Plane link takes effect immediately."""
+    while True:
+        if not _ambient_active():
+            await asyncio.sleep(2.0)
+            continue
+        gap = _ambient_planner.next_gap()
+        if not math.isfinite(gap):
+            await asyncio.sleep(2.0)
+            continue
+        deadline = time.monotonic() + gap
+        while time.monotonic() < deadline:
+            await asyncio.sleep(1.0)
+            if not _ambient_active():
+                break
+        if not _ambient_active():
+            continue
+        plan = _ambient_plan()
+        if not plan:
+            continue
+        station_name, size, enroute, rules, ctx = plan
+        it = _ambient_lib.pick(station=station_name, size=size, enroute=enroute,
+                               rules=rules, rng=_ambient_rng) if _ambient_lib else None
+        if it is None:
+            continue
+        rendered = _render(it, ctx)
+        if not rendered.lines or not _ambient_active():
+            continue
+        log.debug(f"Ambient traffic: {it.id} on {station_name} ({rendered.callsign})")
+        await _play_rendered(rendered, kind="ambient")
+
+
+async def _set_user_speaking(flag: bool):
+    """Gate ambient traffic on the pilot's mic. On key-up we also tell clients to
+    cut any party-line audio already playing — a real radio goes quiet the moment
+    you transmit."""
+    global _user_speaking
+    if flag == _user_speaking:
+        return
+    _user_speaking = flag
+    if flag:
+        await _broadcast("ambient_stop")
+
+
+async def _set_ambient(level: Optional[str], rules=None):
+    """Apply + persist the ambient level (off|light|medium|heavy) and, optionally,
+    the airport ruleset (["VFR"] or ["VFR","IFR"])."""
+    if level is not None:
+        lvl = str(level).lower().strip()
+        config.set_env("AMBIENT_TRAFFIC_LEVEL", lvl)
+        if _ambient_planner is not None:
+            _ambient_planner.set_level(lvl)
+        log.info(f"Ambient traffic level → {lvl}")
+    if rules is not None:
+        if isinstance(rules, str):
+            rlist = [r.strip().upper() for r in rules.split(",")]
+        else:
+            rlist = [str(r).strip().upper() for r in rules]
+        rlist = [r for r in rlist if r in ("VFR", "IFR")] or ["VFR"]
+        config.set_env("AMBIENT_TRAFFIC_RULES", ",".join(rlist))
+        config.AMBIENT_TRAFFIC_RULES = rlist   # set_env stored the string; keep the list
+        log.info(f"Ambient traffic rules → {rlist}")
+    await _broadcast_config_status()
+
+
+# Station enum → library station name
+_AMBIENT_STATION_NAME: dict = {
+    Station.GND:   "ground",
+    Station.TWR:   "tower",
+    Station.APP:   "approach",
+    Station.DEP:   "radar",
+    Station.RADAR: "radar",
+    Station.FIS:   "fis",
+}
+
+# Station enum → spoken controller suffix (for the ambient controller callsign).
+_AMBIENT_STATION_LABEL: dict = {
+    Station.GND:   "Ground",
+    Station.TWR:   "Tower",
+    Station.APP:   "Approach",
+    Station.DEP:   "Departure",
+    Station.RADAR: "Radar",
+    Station.FIS:   "Information",
+}
+
+
+# ------------------------------------------------------------------ #
 # Client handler
 
 async def _send_current_state(ws: WebSocketServerProtocol):
@@ -291,6 +620,12 @@ async def _handle_client_message(msg: dict):
         await _new_flight()
     elif t == "set_config":
         await _set_config(msg.get("config", {}))
+    elif t == "set_ambient":
+        await _set_ambient(msg.get("level"), msg.get("rules"))
+    elif t == "mic_open":
+        await _set_user_speaking(True)
+    elif t == "mic_close":
+        await _set_user_speaking(False)
     elif t == "set_vfr_weather":
         await _set_vfr_weather()
     elif t == "get_config_status":
@@ -338,22 +673,29 @@ async def _process_transmission_locked(text: str):
             )
             return
 
+        # Realism beat: the controller may work one other aircraft first, before
+        # turning back to you. Plays on the shared channel, so it finishes before
+        # your reply keys up.
+        try:
+            await _maybe_interject()
+        except Exception as e:
+            log.debug(f"Ambient interjection skipped: {e}")
+
         await _broadcast("atc_message", role="atc", text=r.text,
                          model=r.model, timestamp=time.time())
 
         # Synthesize ATC audio (non-fatal if TTS unavailable). The spoken form
         # is normalized (callsigns → NATO, numbers → digits) so any TTS backend
         # reads it like a controller; the displayed text above stays compact.
+        # Played through the half-duplex channel so it never overlaps traffic.
         if _AUDIO_READY:
             try:
                 spoken = _radio_text.to_spoken(r.text)
                 samples, sr = await asyncio.to_thread(_audio_tts.synthesize, spoken)
                 samples      = _audio_radio.apply_radio_fx(samples, sr)
-                wav_bytes    = _audio_radio.encode_wav(samples, sr)
-                await _broadcast("atc_audio",
-                                 audio=base64.b64encode(wav_bytes).decode(),
-                                 text=r.text, model=r.model,
-                                 timestamp=time.time())
+                await _play_on_channel(samples, sr, event="atc_audio",
+                                       text=r.text, model=r.model,
+                                       timestamp=time.time())
             except Exception as tts_err:
                 log.warning(f"TTS synthesis failed: {tts_err}")
 
@@ -450,11 +792,13 @@ async def _load_scenario(data: dict):
 
 
 async def _new_flight():
-    global _session, _current_airport, _current_acft, _prev_ptt
+    global _session, _current_airport, _current_acft, _prev_ptt, _ambient_size, _user_speaking
     log.info("New flight — resetting ATC session")
     _session = None
     _current_airport = None
     _current_acft = None
+    _ambient_size = None
+    _user_speaking = False
     if _prev_ptt:
         await _broadcast("ptt_end")
     _prev_ptt = False
@@ -515,6 +859,8 @@ async def _on_ptt_change(pressed: bool):
     if pressed == _prev_ptt:
         return
     _prev_ptt = pressed
+    # Gate ambient traffic on the mic too (X-Plane PTT path).
+    await _set_user_speaking(pressed)
     if pressed:
         log.info("PTT pressed — recording started")
         await _broadcast("ptt_start")
@@ -645,7 +991,10 @@ async def _await_live_weather(timeout: float = 12.0, poll: float = 0.5):
 async def _set_airport_inner(airport: Airport, scenario: Optional[Scenario] = None):
     global _current_airport, _session
 
+    global _ambient_size
     _current_airport = airport
+    _ambient_size = classify_size(airport)
+    log.info(f"Ambient: {airport.icao} classified as a {_ambient_size} field")
     await _broadcast("airport_detected", **_airport_dict(airport))
 
     # Build per-airport conditions dict for ATCSession
@@ -941,6 +1290,8 @@ def _config_status() -> dict:
             "xplane_ptt_dataref": config.XPLANE_PTT_DATAREF,
             "has_elevenlabs":     el_key,
             "has_openai":         bool(config.OPENAI_API_KEY),
+            "ambient_level":      config.AMBIENT_TRAFFIC_LEVEL,
+            "ambient_rules":      list(config.AMBIENT_TRAFFIC_RULES),
         },
     }
 
@@ -961,6 +1312,8 @@ async def _set_config(cfg: dict):
         config.set_env("XPLANE_PATH", cfg["xplane_path"])
         config.set_xplane_path(cfg["xplane_path"])
         await _ensure_airport_db(force=True)
+    if cfg.get("ambient_level") is not None or cfg.get("ambient_rules") is not None:
+        await _set_ambient(cfg.get("ambient_level"), cfg.get("ambient_rules"))
 
     # Re-verify voice now that keys may have changed (logs the active backend).
     if _AUDIO_READY:
@@ -1062,9 +1415,11 @@ async def _refresh_session_weather():
 
 async def run():
     global _airport_db, _driver, _start_time, _tx_lock, _loop
+    global _channel_lock, _ambient_lib, _ambient_planner
     _start_time = time.time()
-    _tx_lock    = asyncio.Lock()
-    _loop       = asyncio.get_running_loop()   # for thread-safe scheduling from connector callbacks
+    _tx_lock      = asyncio.Lock()
+    _channel_lock = asyncio.Lock()   # half-duplex radio: one transmission at a time
+    _loop         = asyncio.get_running_loop()   # for thread-safe scheduling from connector callbacks
 
     _startup_banner()
 
@@ -1072,6 +1427,16 @@ async def run():
                         format="%(levelname)s %(name)s: %(message)s")
 
     acdb.load()   # small aircraft DB — always available
+
+    # Ambient traffic library + pacing. Loaded even if audio is off, so the
+    # doctor can report the level; the loop self-gates on audio + X-Plane.
+    extra = Path(config.AMBIENT_LIBRARY_DIR) if config.AMBIENT_LIBRARY_DIR else None
+    _ambient_lib     = load_library(extra)
+    _ambient_planner = AmbientPlanner(config.AMBIENT_TRAFFIC_LEVEL)
+    log.info(
+        f"Ambient traffic: level={_ambient_planner.level.name}, "
+        f"{len(_ambient_lib)} interactions, rules={config.AMBIENT_TRAFFIC_RULES}"
+    )
 
     # Load airports if we can find apt.dat; otherwise start unconfigured and let
     # the Settings view supply the X-Plane path.
@@ -1095,6 +1460,7 @@ async def run():
             _state_poll_loop(),
             _heartbeat_loop(),
             _xplane_probe_loop(),
+            _ambient_loop(),
         )
 
 

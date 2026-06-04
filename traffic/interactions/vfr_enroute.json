@@ -1,0 +1,58 @@
+{
+  "_comment": "En-route VFR chatter on a Flight Information Service (FIS / 'Information'). No home airport — enroute is true, sizes ignored. atc_callsign defaults to 'Information' unless the backend supplies a regional FIS name.",
+  "interactions": [
+    {
+      "id": "fis_flight_following",
+      "station": "fis",
+      "flight_rules": "VFR",
+      "enroute": true,
+      "lines": [
+        { "speaker": "pilot", "text": "{atc_callsign}, {callsign}, VFR, request basic service." },
+        { "speaker": "atc",   "text": "{callsign}, {atc_callsign}, basic service, squawk 7000, pass your message." },
+        { "speaker": "pilot", "text": "{callsign}, Cessna 172, 4500 feet, en route to the east, request traffic information." }
+      ]
+    },
+    {
+      "id": "fis_position_report",
+      "station": "fis",
+      "flight_rules": "VFR",
+      "enroute": true,
+      "lines": [
+        { "speaker": "pilot", "text": "{atc_callsign}, {callsign}, overhead the lake, 3500 feet, VFR." },
+        { "speaker": "atc",   "text": "{callsign}, roger, no reported traffic, QNH {qnh}." }
+      ]
+    },
+    {
+      "id": "fis_traffic_info",
+      "station": "fis",
+      "flight_rules": "VFR",
+      "enroute": true,
+      "lines": [
+        { "speaker": "atc",   "text": "{callsign}, traffic, two o'clock, 4 miles, crossing left to right, type unknown." },
+        { "speaker": "pilot", "text": "Traffic in sight, {callsign}." }
+      ]
+    },
+    {
+      "id": "fis_freq_change",
+      "station": "fis",
+      "flight_rules": "VFR",
+      "enroute": true,
+      "weight": 0.8,
+      "lines": [
+        { "speaker": "pilot", "text": "{atc_callsign}, {callsign}, leaving your area to the south, request frequency change." },
+        { "speaker": "atc",   "text": "{callsign}, frequency change approved, squawk 7000, good day." }
+      ]
+    },
+    {
+      "id": "fis_handoff",
+      "station": "fis",
+      "flight_rules": "VFR",
+      "enroute": true,
+      "weight": 0.7,
+      "lines": [
+        { "speaker": "pilot", "text": "{atc_callsign}, {callsign}, request handover for landing." },
+        { "speaker": "atc",   "text": "{callsign}, contact {airport} Tower, good day." }
+      ]
+    }
+  ]
+}

@@ -31,6 +31,15 @@ DIGITS = {
 }
 _SIDE = {'L': 'Left', 'C': 'Center', 'R': 'Right'}
 
+# Airline ICAO → radio telephony. Only used for ambient IFR traffic callsigns
+# like "DLH472"; unknown 3-letter+digit tokens are left untouched so normal ATC
+# text (e.g. "ILS27" if it ever appeared) is never mangled.
+AIRLINE_TELEPHONY = {
+    'DLH': 'Lufthansa', 'EWG': 'Eurowings', 'BER': 'Air Berlin',
+    'CFG': 'Condor', 'BAW': 'Speedbird', 'AFR': 'Air France',
+    'KLM': 'KLM', 'RYR': 'Ryanair', 'EZY': 'Easy', 'WZZ': 'Wizz Air',
+}
+
 
 def _spell(token: str) -> str:
     """Expand an alphanumeric token to NATO letters + spoken digits."""
@@ -51,6 +60,9 @@ def _digits(num: str) -> str:
 # Aircraft registration / callsign: 1-2 letters, hyphen, 2-6 alphanumerics
 # (D-EIYD, D-ABCD, N-12345). Hyphen is required so we never touch plain words.
 _REG_RE = re.compile(r'\b([A-Z]{1,2}-[A-Z0-9]{2,6})\b')
+# Airline callsign token: 3 uppercase letters + 2-4 digits (DLH472). Only the
+# ICAO codes in AIRLINE_TELEPHONY expand; anything else is returned verbatim.
+_AIRLINE_RE = re.compile(r'\b([A-Z]{3})(\d{2,4})\b')
 _FREQ_RE = re.compile(r'\b(1[0-9]{2})\.(\d{2,3})\b')
 _RUNWAY_RE = re.compile(r'\brunway\s+(\d{1,2})([LCR])?\b', re.IGNORECASE)
 _SQUAWK_RE = re.compile(r'\b(squawk)\s+(\d{4})\b', re.IGNORECASE)
@@ -72,9 +84,17 @@ def _taxi_sub(m: re.Match) -> str:
     return f"{lead} {ids}"
 
 
+def _airline_sub(m: re.Match) -> str:
+    name = AIRLINE_TELEPHONY.get(m.group(1))
+    if not name:
+        return m.group(0)   # not a known airline → leave it exactly as-is
+    return f"{name} {_digits(m.group(2))}"
+
+
 def to_spoken(text: str) -> str:
     """Return the spoken radio form of an ATC transmission."""
     text = _REG_RE.sub(lambda m: _spell(m.group(1)), text)
+    text = _AIRLINE_RE.sub(_airline_sub, text)
     text = _FREQ_RE.sub(lambda m: f"{_digits(m.group(1))} decimal {_digits(m.group(2))}", text)
     text = _RUNWAY_RE.sub(
         lambda m: f"runway {_digits(m.group(1))}"

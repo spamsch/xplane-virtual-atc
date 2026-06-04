@@ -35,6 +35,9 @@ export const pttActive       = writable(false);   // mic is recording
 export const transcription   = writable('');      // last STT preview text
 export const audioEnabled    = writable(false);   // set true once mic permission granted
 
+// Ambient traffic ("party line")
+export const ambientLevel    = writable('medium'); // off|light|medium|heavy (mirrors backend)
+
 // Derived: is the aircraft on the ground?
 export const onGround = derived(flightState, $s => $s?.on_ground ?? true);
 

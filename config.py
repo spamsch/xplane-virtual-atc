@@ -83,6 +83,54 @@ MODEL_BOUNDARY = "claude-opus-4-8"     # first call, complex clearances, context
 # ── Audio (optional feature; requires pip install faster-whisper piper-tts) ──
 AUDIO_ENABLED = os.environ.get("AUDIO_ENABLED", "true").lower() == "true"
 
+# ── Ambient radio traffic — the "party line" of other aircraft on your
+# frequency, injected into the audio when X-Plane is connected. ────────────────
+# Density of the chatter. One knob: off | light | medium | heavy. Default medium.
+# Matched to the frequency type you're tuned to (no Tower traffic on Ground) and
+# the current airport's size; suppressed while you're transmitting.
+AMBIENT_TRAFFIC_LEVEL = os.environ.get("AMBIENT_TRAFFIC_LEVEL", "medium").lower()
+# Which flight rules other traffic flies. VFR-only by default; the engine is
+# ready to mix in IFR airliners at a field — set "VFR,IFR". En-route is always
+# VFR regardless of this. Comma-separated; values: VFR, IFR.
+AMBIENT_TRAFFIC_RULES = [
+    r.strip().upper() for r in os.environ.get("AMBIENT_TRAFFIC_RULES", "VFR").split(",")
+    if r.strip()
+] or ["VFR"]
+# The *other* pilots on the frequency are each given a voice drawn from a pool,
+# seeded by their callsign so one aircraft sounds consistent. By default the pool
+# is chosen to match the active TTS backend (see the pools below): with
+# ElevenLabs you get 10 distinct premade voices. The controller's own ambient
+# lines always use your configured controller voice — it's the same controller.
+#
+# Override the pool with AMBIENT_PILOT_VOICES (comma-separated): ElevenLabs voice
+# ids or names from ELEVENLABS_VOICE_LIBRARY, or OpenAI/say voice names. Empty =
+# use the backend default pool below.
+AMBIENT_PILOT_VOICES = [
+    resolve_elevenlabs_voice(v.strip())
+    for v in os.environ.get("AMBIENT_PILOT_VOICES", "").split(",") if v.strip()
+]
+# Default 10-voice ElevenLabs pool for other traffic — a varied mix of accents,
+# ages and genders, deliberately excluding the controller's Daniel so the pilots
+# never sound like the controller. Used when AMBIENT_PILOT_VOICES is empty and
+# the active TTS backend is ElevenLabs.
+ELEVENLABS_PILOT_POOL = [
+    "nPczCjzI2devNBz1zQrb",  # Brian   — American · deep
+    "IKne3meq5aSn9XLyUdCD",  # Charlie — Australian · conversational
+    "TX3LPaxmHKxFdv7VOQHJ",  # Liam    — American · articulate
+    "JBFqnCBsd6RMkjVDRZzb",  # George  — British · warm
+    "ErXwobaYiN019PkySvjV",  # Antoni  — American · well-rounded
+    "TxGEqnHWrfWFTfGW9XjX",  # Josh    — American · deep · young
+    "yoZ06aMxZJJ28mfd3POQ",  # Sam     — American · raspy
+    "VR6AewLTigWG4xSOukaG",  # Arnold  — American · crisp
+    "Xb7hH8MSUJpSbSDYk0k2",  # Alice   — British · female
+    "XrExE9yKIg1WjnnlVkGX",  # Matilda — American · female
+]
+# Default pool when the active TTS backend is OpenAI (its six built-in voices).
+OPENAI_PILOT_POOL = ["onyx", "echo", "alloy", "fable", "nova", "shimmer"]
+# Optional directory of extra interaction *.json files, merged on top of the
+# built-in library (traffic/interactions/). This is the "customise it" hook.
+AMBIENT_LIBRARY_DIR = os.environ.get("AMBIENT_LIBRARY_DIR", "")
+
 # STT — faster-whisper model name or HuggingFace CTranslate2 model ID.
 # Only used when offline STT is opted into (STT_BACKEND=local); 'auto' never
 # selects local, so this model is not downloaded unless you ask for it.
@@ -137,9 +185,35 @@ ELEVENLABS_API_KEY   = os.environ.get("ELEVENLABS_API_KEY", "")
 # right default for live ATC. eleven_multilingual_v2 is higher quality but slower;
 # eleven_v3 is the most expressive but slowest.
 ELEVENLABS_TTS_MODEL = os.environ.get("ELEVENLABS_TTS_MODEL", "eleven_flash_v2_5")
-# Voice id (not name). Default: "Daniel" — a steady British broadcaster, a good
-# controller voice. Browse voices at https://elevenlabs.io/app/voice-library
-ELEVENLABS_VOICE_ID  = os.environ.get("ELEVENLABS_VOICE_ID", "onwK4e9ZLuTAKqWW03F9")
+# Controller voice. ELEVENLABS_VOICE_ID accepts EITHER a friendly name from the
+# curated list below (case-insensitive) OR any raw voice id from your ElevenLabs
+# library. The curated voices are ElevenLabs premade voices that read well as a
+# controller — steady, clear, broadcaster/news delivery. Browse more at
+# https://elevenlabs.io/app/voice-library
+ELEVENLABS_VOICE_LIBRARY = {
+    "daniel":  "onwK4e9ZLuTAKqWW03F9",  # British · deep · news presenter  (default)
+    "brian":   "nPczCjzI2devNBz1zQrb",  # American · deep · calm narration
+    "george":  "JBFqnCBsd6RMkjVDRZzb",  # British · warm
+    "bill":    "pqHfZKP75CvOlQylNhV4",  # American · older · documentary
+    "adam":    "pNInz6obpgDQGcFmaJgB",  # American · deep · neutral
+    "liam":    "TX3LPaxmHKxFdv7VOQHJ",  # American · articulate
+    "charlie": "IKne3meq5aSn9XLyUdCD",  # Australian · conversational
+    "alice":   "Xb7hH8MSUJpSbSDYk0k2",  # British · female · confident news
+    "matilda": "XrExE9yKIg1WjnnlVkGX",  # American · female · warm
+    "lily":    "pFZP5JQG7iQjIQuC4Bku",  # British · female · warm
+}
+
+
+def resolve_elevenlabs_voice(value: str) -> str:
+    """Map a friendly name from ELEVENLABS_VOICE_LIBRARY (case-insensitive) to its
+    voice id; pass any other value through as a raw id. Empty → Daniel."""
+    v = (value or "").strip()
+    if not v:
+        return ELEVENLABS_VOICE_LIBRARY["daniel"]
+    return ELEVENLABS_VOICE_LIBRARY.get(v.lower(), v)
+
+
+ELEVENLABS_VOICE_ID = resolve_elevenlabs_voice(os.environ.get("ELEVENLABS_VOICE_ID", "daniel"))
 # Speech rate. ElevenLabs accepts 0.7–1.2 (1.0 = normal). 1.2 is the max — the
 # fast, clipped cadence of a busy controller. Clamped to the valid range.
 ELEVENLABS_TTS_SPEED = max(0.7, min(1.2, float(os.environ.get("ELEVENLABS_TTS_SPEED", "1.2"))))

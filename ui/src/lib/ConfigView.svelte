@@ -1,6 +1,8 @@
 <script>
-  import { configStatus, settingsOpen } from './store.js';
-  import { setConfig } from './ws.js';
+  import { configStatus, settingsOpen, ambientLevel } from './store.js';
+  import { setConfig, setAmbient } from './ws.js';
+
+  const AMBIENT_LEVELS = ['off', 'light', 'medium', 'heavy'];
 
   let elevenKey = '';
   let xplanePath = '';
@@ -72,6 +74,22 @@
       <span class="hint">Only needed if it isn’t the default Steam location. Used to find airport data (apt.dat).</span>
     </label>
 
+    <div class="field">
+      <span class="field-label">Background traffic</span>
+      <div class="seg">
+        {#each AMBIENT_LEVELS as lvl}
+          <button
+            type="button"
+            class="seg-btn"
+            class:active={$ambientLevel === lvl}
+            onclick={() => setAmbient(lvl)}
+          >{lvl}</button>
+        {/each}
+      </div>
+      <span class="hint">Other aircraft on your frequency, live from X-Plane. Matched to the
+        station you’re tuned to and the airport’s size; goes quiet while you transmit. VFR only for now.</span>
+    </div>
+
     <div class="actions">
       <button class="save" onclick={save}>{justSaved ? 'Saved ✓' : 'Save'}</button>
       {#if !configured}
@@ -119,6 +137,27 @@
   .field input { padding: 8px 10px; font-size: 13px; }
   .hint { font-size: 11px; color: var(--text-muted); }
   .url { color: var(--accent-blue); }
+
+  .seg { display: flex; gap: 4px; }
+  .seg-btn {
+    flex: 1;
+    padding: 6px 8px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    transition: color 0.12s, border-color 0.12s, background 0.12s;
+  }
+  .seg-btn:hover { color: var(--text); border-color: var(--border-bright); }
+  .seg-btn.active {
+    color: var(--accent-green);
+    border-color: var(--accent-green);
+    background: rgba(63, 185, 80, 0.12);
+  }
 
   .actions { display: flex; align-items: center; gap: 12px; margin-top: 4px; }
   .save {

@@ -1,0 +1,74 @@
+{
+  "_comment": "VFR ground chatter — startup, taxi, radio checks. Generic taxi phrasing only (no computed routes for other traffic). Edit freely or drop in your own *.json next to this one.",
+  "interactions": [
+    {
+      "id": "gnd_startup",
+      "station": "ground",
+      "flight_rules": "VFR",
+      "sizes": ["small", "medium", "large"],
+      "lines": [
+        { "speaker": "pilot", "text": "{atc_callsign}, {callsign}, request startup." },
+        { "speaker": "atc",   "text": "{callsign}, startup approved, QNH {qnh}, report ready to taxi." },
+        { "speaker": "pilot", "text": "Startup approved, QNH {qnh}, {callsign}." }
+      ]
+    },
+    {
+      "id": "gnd_startup_then_taxi",
+      "station": "ground",
+      "flight_rules": "VFR",
+      "sizes": ["small", "medium", "large"],
+      "weight": 1.4,
+      "lines": [
+        { "speaker": "pilot", "text": "{atc_callsign}, {callsign}, request startup, VFR departure." },
+        { "speaker": "atc",   "text": "{callsign}, startup approved, QNH {qnh}, report ready to taxi." },
+        { "speaker": "pilot", "text": "Startup approved, QNH {qnh}, {callsign}." },
+        { "speaker": "pilot", "text": "{atc_callsign}, {callsign}, ready to taxi." },
+        { "speaker": "atc",   "text": "{callsign}, taxi to holding point runway {runway}, QNH {qnh}." },
+        { "speaker": "pilot", "text": "Taxi to holding point runway {runway}, QNH {qnh}, {callsign}." }
+      ]
+    },
+    {
+      "id": "gnd_taxi_request",
+      "station": "ground",
+      "flight_rules": "VFR",
+      "sizes": ["medium", "large"],
+      "lines": [
+        { "speaker": "pilot", "text": "{atc_callsign}, {callsign}, ready to taxi, VFR departure to the south." },
+        { "speaker": "atc",   "text": "{callsign}, taxi to holding point runway {runway}, QNH {qnh}." },
+        { "speaker": "pilot", "text": "Taxi to holding point runway {runway}, QNH {qnh}, {callsign}." }
+      ]
+    },
+    {
+      "id": "gnd_radio_check",
+      "station": "ground",
+      "flight_rules": "VFR",
+      "sizes": ["small", "medium", "large"],
+      "weight": 0.6,
+      "lines": [
+        { "speaker": "pilot", "text": "{atc_callsign}, {callsign}, radio check." },
+        { "speaker": "atc",   "text": "{callsign}, reading you five." }
+      ]
+    },
+    {
+      "id": "gnd_taxi_generic_small",
+      "station": "ground",
+      "flight_rules": "VFR",
+      "sizes": ["small"],
+      "lines": [
+        { "speaker": "pilot", "text": "{atc_callsign}, {callsign}, request taxi for local VFR." },
+        { "speaker": "atc",   "text": "{callsign}, taxi to holding point runway {runway}, follow the green centreline, QNH {qnh}." }
+      ]
+    },
+    {
+      "id": "gnd_request_park",
+      "station": "ground",
+      "flight_rules": "VFR",
+      "sizes": ["medium", "large"],
+      "weight": 0.7,
+      "lines": [
+        { "speaker": "pilot", "text": "{atc_callsign}, {callsign}, runway vacated, request taxi to general aviation parking." },
+        { "speaker": "atc",   "text": "{callsign}, taxi to general aviation, welcome to {airport}." }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,71 @@
+{
+  "_comment": "VFR tower chatter — departures, the circuit, landings, traffic info.",
+  "interactions": [
+    {
+      "id": "twr_ready_departure",
+      "station": "tower",
+      "flight_rules": "VFR",
+      "sizes": ["small", "medium", "large"],
+      "lines": [
+        { "speaker": "pilot", "text": "{atc_callsign}, {callsign}, holding point runway {runway}, ready for departure." },
+        { "speaker": "atc",   "text": "{callsign}, runway {runway}, wind {wind}, cleared for take-off." },
+        { "speaker": "pilot", "text": "Cleared for take-off runway {runway}, {callsign}." }
+      ]
+    },
+    {
+      "id": "twr_landing_clearance",
+      "station": "tower",
+      "flight_rules": "VFR",
+      "sizes": ["small", "medium", "large"],
+      "lines": [
+        { "speaker": "pilot", "text": "{atc_callsign}, {callsign}, left base runway {runway}." },
+        { "speaker": "atc",   "text": "{callsign}, number one, runway {runway}, wind {wind}, cleared to land." },
+        { "speaker": "pilot", "text": "Cleared to land runway {runway}, {callsign}." }
+      ]
+    },
+    {
+      "id": "twr_traffic_number_two",
+      "station": "tower",
+      "flight_rules": "VFR",
+      "sizes": ["medium", "large"],
+      "lines": [
+        { "speaker": "pilot", "text": "{atc_callsign}, {callsign}, downwind runway {runway}, touch and go." },
+        { "speaker": "atc",   "text": "{callsign}, number two, traffic on final is a Cessna, report runway in sight." },
+        { "speaker": "pilot", "text": "Number two, looking for traffic, {callsign}." }
+      ]
+    },
+    {
+      "id": "twr_join_circuit",
+      "station": "tower",
+      "flight_rules": "VFR",
+      "sizes": ["small", "medium"],
+      "lines": [
+        { "speaker": "pilot", "text": "{atc_callsign}, {callsign}, 5 miles south, inbound for landing with information, request joining." },
+        { "speaker": "atc",   "text": "{callsign}, join right downwind runway {runway}, QNH {qnh}, report downwind." },
+        { "speaker": "pilot", "text": "Join right downwind runway {runway}, QNH {qnh}, {callsign}." }
+      ]
+    },
+    {
+      "id": "twr_after_departure",
+      "station": "tower",
+      "flight_rules": "VFR",
+      "sizes": ["small", "medium", "large"],
+      "weight": 0.8,
+      "lines": [
+        { "speaker": "pilot", "text": "{atc_callsign}, {callsign}, leaving the zone to the east, request frequency change." },
+        { "speaker": "atc",   "text": "{callsign}, frequency change approved, squawk 7000, good day." }
+      ]
+    },
+    {
+      "id": "twr_go_around",
+      "station": "tower",
+      "flight_rules": "VFR",
+      "sizes": ["medium", "large"],
+      "weight": 0.5,
+      "lines": [
+        { "speaker": "atc",   "text": "{callsign}, go around, traffic on the runway, climb runway heading." },
+        { "speaker": "pilot", "text": "Going around, runway heading, {callsign}." }
+      ]
+    }
+  ]
+}

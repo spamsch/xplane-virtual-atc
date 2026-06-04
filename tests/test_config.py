@@ -58,6 +58,42 @@ class TestSetEnv:
         assert config.ELEVENLABS_API_KEY == "sk_trim"
 
 
+class TestResolveElevenLabsVoice:
+    def test_name_maps_to_id(self):
+        assert config.resolve_elevenlabs_voice("daniel") == "onwK4e9ZLuTAKqWW03F9"
+
+    def test_name_is_case_insensitive(self):
+        assert config.resolve_elevenlabs_voice("Brian") == config.ELEVENLABS_VOICE_LIBRARY["brian"]
+        assert config.resolve_elevenlabs_voice("  GEORGE  ") == config.ELEVENLABS_VOICE_LIBRARY["george"]
+
+    def test_raw_id_passes_through(self):
+        raw = "AbCdEf1234567890raw"
+        assert config.resolve_elevenlabs_voice(raw) == raw
+
+    def test_empty_defaults_to_daniel(self):
+        assert config.resolve_elevenlabs_voice("") == config.ELEVENLABS_VOICE_LIBRARY["daniel"]
+        assert config.resolve_elevenlabs_voice(None) == config.ELEVENLABS_VOICE_LIBRARY["daniel"]
+
+    def test_default_voice_id_is_daniel(self):
+        # The resolved module default must be a real id, never the name.
+        assert config.ELEVENLABS_VOICE_ID == config.ELEVENLABS_VOICE_LIBRARY["daniel"]
+
+
+class TestPilotPool:
+    def test_default_pool_has_ten_voices(self):
+        assert len(config.ELEVENLABS_PILOT_POOL) == 10
+
+    def test_pool_excludes_controller_default(self):
+        # Other traffic must never sound like the controller.
+        assert config.ELEVENLABS_VOICE_LIBRARY["daniel"] not in config.ELEVENLABS_PILOT_POOL
+
+    def test_pool_ids_are_unique(self):
+        assert len(set(config.ELEVENLABS_PILOT_POOL)) == len(config.ELEVENLABS_PILOT_POOL)
+
+    def test_openai_pool_present(self):
+        assert "onyx" in config.OPENAI_PILOT_POOL
+
+
 class TestSetXPlanePath:
     def test_recomputes_apt_paths(self, tmp_path, restore_config):
         base = tmp_path / "X-Plane 12"

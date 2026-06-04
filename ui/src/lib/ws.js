@@ -8,6 +8,7 @@ import {
   flightState, airport, activeRunway, atcCallsign, boundaryNotes,
   messages, phase, station, thinking, loading, loadingLabel,
   configStatus, pttActive, transcription, audioEnabled, vfrWeather,
+  ambientLevel,
 } from './store.js';
 import { playMicClick } from './sound.js';
 
@@ -38,6 +39,11 @@ export async function startPTT() {
     if (!_micStream) return;
   }
 
+  // Keying the mic silences the party line instantly — a radio is half-duplex,
+  // and we also tell the backend to stop scheduling traffic.
+  stopAmbientAudio();
+  sendMessage('mic_open');
+
   _audioChunks   = [];
   _mediaRecorder = new MediaRecorder(_micStream);
   _mediaRecorder.ondataavailable = e => { if (e.data.size > 0) _audioChunks.push(e.data); };
@@ -54,6 +60,7 @@ export async function stopPTT() {
   if (_pttTimer) { clearTimeout(_pttTimer); _pttTimer = null; }
 
   playMicClick('unkey');   // squelch-tail hiss when the mic is unkeyed
+  sendMessage('mic_close');
 
   await new Promise(resolve => {
     _mediaRecorder.onstop = resolve;
@@ -131,15 +138,39 @@ function _toBase64(bytes) {
   return btoa(str);
 }
 
-function _playAtcAudio(b64) {
+function _b64ToBlobUrl(b64) {
   const binary = atob(b64);
   const bytes  = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  const blob = new Blob([bytes], { type: 'audio/wav' });
-  const url  = URL.createObjectURL(blob);
+  return URL.createObjectURL(new Blob([bytes], { type: 'audio/wav' }));
+}
+
+function _playAtcAudio(b64) {
+  const url = _b64ToBlobUrl(b64);
   const audio = new Audio(url);
   audio.onended = () => URL.revokeObjectURL(url);
   audio.play().catch(e => console.warn('[audio] play failed:', e));
+}
+
+// Ambient ("party line") playback — tracked so we can cut it the instant the
+// pilot keys the mic or the backend says the frequency is now ours.
+let _ambientAudio = null;
+let _ambientUrl   = null;
+
+function _playAmbientAudio(b64) {
+  stopAmbientAudio();
+  _ambientUrl = _b64ToBlobUrl(b64);
+  _ambientAudio = new Audio(_ambientUrl);
+  _ambientAudio.onended = () => stopAmbientAudio();
+  _ambientAudio.play().catch(e => console.warn('[ambient] play failed:', e));
+}
+
+export function stopAmbientAudio() {
+  if (_ambientAudio) {
+    try { _ambientAudio.pause(); } catch {}
+    _ambientAudio = null;
+  }
+  if (_ambientUrl) { URL.revokeObjectURL(_ambientUrl); _ambientUrl = null; }
 }
 
 const WS_URL = 'ws://localhost:8765';
@@ -173,6 +204,7 @@ function dispatch(msg) {
 
     case 'config_status':
       configStatus.set(msg);
+      if (msg.current?.ambient_level) ambientLevel.set(msg.current.ambient_level);
       break;
 
     case 'state_update':
@@ -213,6 +245,21 @@ function dispatch(msg) {
       _playAtcAudio(msg.audio);
       break;
 
+    case 'ambient_audio':
+      _playAmbientAudio(msg.audio);
+      messages.update(list => [...list, {
+        role: 'ambient',
+        speaker: msg.speaker,         // 'pilot' | 'atc'
+        callsign: msg.callsign,
+        text: msg.text,
+        timestamp: Date.now() / 1000,
+      }]);
+      break;
+
+    case 'ambient_stop':
+      stopAmbientAudio();
+      break;
+
     case 'transcription':
       transcription.set(msg.text);
       break;
@@ -227,6 +274,7 @@ function dispatch(msg) {
 
     case 'flight_reset':
       stopPTT();
+      stopAmbientAudio();
       messages.set([]);
       transcription.set('');
       pttActive.set(false);
@@ -279,6 +327,12 @@ export function newFlight() {
 
 export function setConfig(cfg) {
   sendMessage('set_config', { config: cfg });
+}
+
+/** Set ambient-traffic density: 'off' | 'light' | 'medium' | 'heavy'. */
+export function setAmbient(level) {
+  ambientLevel.set(level);          // optimistic; backend echoes via config_status
+  sendMessage('set_ambient', { level });
 }
 
 function connect() {

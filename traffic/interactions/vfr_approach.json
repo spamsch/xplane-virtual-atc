@@ -1,0 +1,48 @@
+{
+  "_comment": "VFR approach/radar chatter — inbound VFR, traffic information, transition. Approach implies a larger field, so these default to medium/large.",
+  "interactions": [
+    {
+      "id": "app_vfr_inbound",
+      "station": "approach",
+      "flight_rules": "VFR",
+      "sizes": ["medium", "large"],
+      "lines": [
+        { "speaker": "pilot", "text": "{atc_callsign}, {callsign}, VFR inbound from the north, 2500 feet, request flight information." },
+        { "speaker": "atc",   "text": "{callsign}, {atc_callsign}, squawk 7000, QNH {qnh}, report field in sight." },
+        { "speaker": "pilot", "text": "Squawk 7000, QNH {qnh}, wilco, {callsign}." }
+      ]
+    },
+    {
+      "id": "app_traffic_info",
+      "station": "approach",
+      "flight_rules": "VFR",
+      "sizes": ["medium", "large"],
+      "lines": [
+        { "speaker": "atc",   "text": "{callsign}, traffic, eleven o'clock, 3 miles, opposite direction, a glider, indicating 3000 feet." },
+        { "speaker": "pilot", "text": "Looking, negative contact, {callsign}." }
+      ]
+    },
+    {
+      "id": "app_handoff_tower",
+      "station": "approach",
+      "flight_rules": "VFR",
+      "sizes": ["large"],
+      "weight": 0.8,
+      "lines": [
+        { "speaker": "pilot", "text": "{atc_callsign}, {callsign}, field in sight." },
+        { "speaker": "atc",   "text": "{callsign}, contact {airport} Tower, good day." }
+      ]
+    },
+    {
+      "id": "app_descend",
+      "station": "approach",
+      "flight_rules": "VFR",
+      "sizes": ["large"],
+      "lines": [
+        { "speaker": "pilot", "text": "{atc_callsign}, {callsign}, request descent for the approach." },
+        { "speaker": "atc",   "text": "{callsign}, descend 2000 feet, QNH {qnh}, expect runway {runway}." },
+        { "speaker": "pilot", "text": "Descend 2000 feet, QNH {qnh}, {callsign}." }
+      ]
+    }
+  ]
+}

@@ -96,6 +96,11 @@
           </div>
           <div class="bubble-text">{msg.text}</div>
         </div>
+      {:else if msg.role === 'ambient'}
+        <div class="ambient-line" title="Other traffic on this frequency">
+          <span class="ambient-tag">{msg.speaker === 'atc' ? 'ATC' : (msg.callsign ?? 'TFC')}</span>
+          <span class="ambient-text">{msg.text}</span>
+        </div>
       {:else}
         <div class="bubble system">
           <div class="bubble-text">{msg.text}</div>
@@ -278,6 +283,29 @@
     text-align: center;
     width: 100%;
   }
+
+  /* Party-line traffic — deliberately faint, it's not addressed to you. */
+  .ambient-line {
+    align-self: stretch;
+    display: flex;
+    align-items: baseline;
+    gap: 7px;
+    padding: 2px 4px;
+    font-size: 11px;
+    color: var(--text-dim);
+    opacity: 0.62;
+  }
+  .ambient-tag {
+    flex-shrink: 0;
+    font-weight: 700;
+    font-size: 9px;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+    border: 1px solid var(--border);
+    border-radius: 2px;
+    padding: 0 4px;
+  }
+  .ambient-text { font-style: italic; line-height: 1.4; word-break: break-word; }
 
   .thinking {
     display: flex;

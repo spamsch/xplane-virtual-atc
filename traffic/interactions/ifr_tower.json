@@ -1,0 +1,37 @@
+{
+  "_comment": "IFR tower chatter — DEMO of mixing rules at a field. NOT used unless a station is opted into IFR (AMBIENT_TRAFFIC_RULES=VFR,IFR). Defaults to large fields. Airline callsigns like 'DLH472' are spoken via telephony by radio_text.to_spoken.",
+  "interactions": [
+    {
+      "id": "ifr_lineup_wait",
+      "station": "tower",
+      "flight_rules": "IFR",
+      "sizes": ["large"],
+      "lines": [
+        { "speaker": "pilot", "text": "{atc_callsign}, {callsign}, holding point runway {runway}, ready." },
+        { "speaker": "atc",   "text": "{callsign}, line up and wait runway {runway}." },
+        { "speaker": "pilot", "text": "Line up and wait runway {runway}, {callsign}." }
+      ]
+    },
+    {
+      "id": "ifr_takeoff",
+      "station": "tower",
+      "flight_rules": "IFR",
+      "sizes": ["large"],
+      "lines": [
+        { "speaker": "atc",   "text": "{callsign}, runway {runway}, wind {wind}, cleared for take-off." },
+        { "speaker": "pilot", "text": "Cleared for take-off runway {runway}, {callsign}." }
+      ]
+    },
+    {
+      "id": "ifr_landing",
+      "station": "tower",
+      "flight_rules": "IFR",
+      "sizes": ["large"],
+      "lines": [
+        { "speaker": "pilot", "text": "{atc_callsign}, {callsign}, established ILS runway {runway}." },
+        { "speaker": "atc",   "text": "{callsign}, runway {runway}, wind {wind}, cleared to land." },
+        { "speaker": "pilot", "text": "Cleared to land runway {runway}, {callsign}." }
+      ]
+    }
+  ]
+}
