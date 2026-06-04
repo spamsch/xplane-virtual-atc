@@ -102,7 +102,7 @@ class FlightState:
     transponder: float = 0.0
     ptt_pressed: float = 0.0   # raw DataRef value; use ptt_active property
     qnh_inhg: float = 0.0      # sea-level pressure, inHg (0 = not yet received)
-    wind_speed_msc: float = 0.0  # wind at the aircraft, m/s (XP12 weather/aircraft)
+    wind_speed_kts: float = 0.0  # reported surface/at-altitude wind, knots
     wind_dir_deg: float = 0.0
     _icao_chars: list = field(default_factory=lambda: [0.0] * 4)
     _tail_chars: list = field(default_factory=lambda: [0.0] * 10)
@@ -110,12 +110,6 @@ class FlightState:
     @property
     def gs_kts(self) -> float:
         return self.groundspeed_ms * 1.94384
-
-    @property
-    def wind_speed_kts(self) -> float:
-        """Wind at the aircraft in knots. X-Plane reports it in m/s
-        (sim/weather/aircraft/wind_speed_msc); convert here."""
-        return self.wind_speed_msc * 1.94384
 
     @property
     def com1_mhz(self) -> float:

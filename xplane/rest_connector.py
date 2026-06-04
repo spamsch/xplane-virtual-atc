@@ -62,19 +62,36 @@ _DATAREFS: dict[str, str] = {
     'sim/cockpit/radios/transponder_code':         'transponder',
     'sim/aircraft/view/acf_ICAO':                  '_acf_icao_str',
     'sim/aircraft/view/acf_tailnum':               '_tail_str',
-    # Weather — scalar floats in X-Plane 12 (these were arrays in XP11).
-    # Wind: read the wind *at the aircraft* (what the ATIS/Tower reports and what
-    # the sim's weather display shows), not the legacy sim/weather/wind_speed_kt,
-    # which in XP12 no longer tracks the surface wind (it read ~3 kt with a real
-    # 21 kt wind). wind_speed_msc is metres/second → FlightState.wind_speed_kts
-    # converts. Direction stays on the proven degt dataref.
+    # Weather — scalar float in X-Plane 12. (Wind is handled separately below.)
     'sim/weather/barometer_sealevel_inhg':         'qnh_inhg',
-    'sim/weather/aircraft/wind_speed_msc':         'wind_speed_msc',
-    'sim/weather/wind_direction_degt':             'wind_dir_deg',
 }
+
+# Wind is reported as per-altitude LAYERS in XP12, not a single surface value.
+# sim/weather/aircraft/wind_speed_kts[] (knots) and wind_direction_degt[] are
+# indexed by wind_altitude_msl_m[] (metres MSL). We pick the layer at the
+# aircraft's current altitude — on the ground that's the field's surface wind
+# (what the ATIS/Tower reports and what the sim's weather page shows), airborne
+# it's the wind at your level. The legacy sim/weather/wind_speed_kt is the
+# friction-reduced wind the airframe *feels* (~3 kt vs a reported 21 kt) — wrong
+# for ATC, so we don't use it.
+_WIND_SPEED_REF = 'sim/weather/aircraft/wind_speed_kts'
+_WIND_DIR_REF   = 'sim/weather/aircraft/wind_direction_degt'
+_WIND_ALT_REF   = 'sim/weather/aircraft/wind_altitude_msl_m'
+_WIND_LAYER_REFS = (_WIND_SPEED_REF, _WIND_DIR_REF, _WIND_ALT_REF)
 
 # Array datarefs that need ?index=N when fetching the value
 _ARRAY_IDX: dict[str, int] = {}
+
+
+def _pick_wind_layer(altitudes_m: list, elevation_m: float) -> int:
+    """Index of the wind layer to report: the lowest layer at or above the
+    aircraft's MSL altitude. X-Plane's layer 0 is the sea-level datum, so an
+    airport above sea level reports the next layer up — matching the sim's own
+    'ground level' wind readout."""
+    for i, alt in enumerate(altitudes_m):
+        if alt >= elevation_m - 1.0:
+            return i
+    return len(altitudes_m) - 1 if altitudes_m else 0
 
 
 def _http_get(url: str, timeout: float = 2.0) -> dict:
@@ -330,7 +347,7 @@ class XPlaneRestConnector:
         resolve nothing (0/18). That's expected; _poll() keeps retrying the
         missing ones via _retry_dataref_discovery() until the flight loads, so
         position (and therefore airport detection) recovers on its own."""
-        for name in _DATAREFS:
+        for name in (*_DATAREFS, *_WIND_LAYER_REFS):
             self._resolve_dataref(name)
         found   = sum(1 for n in _DATAREFS if n in self._ids)
         missing = [n for n in _DATAREFS if n not in self._ids]
@@ -417,7 +434,7 @@ class XPlaneRestConnector:
         """Re-resolve flight datarefs that weren't registered at connect time —
         discovery often runs while X-Plane is still at the menu, before a flight
         loads, so the first pass resolves nothing. Throttled to every 5 s."""
-        missing = [n for n in _DATAREFS if n not in self._ids]
+        missing = [n for n in (*_DATAREFS, *_WIND_LAYER_REFS) if n not in self._ids]
         if not missing:
             return
         now = time.monotonic()
@@ -431,6 +448,29 @@ class XPlaneRestConnector:
                 f"Dataref discovery (late): resolved {newly} more "
                 f"— {have}/{len(_DATAREFS)} now available"
             )
+
+    def _apply_wind(self, new: FlightState, old: FlightState) -> None:
+        """Read the wind-layer arrays and set new.wind_speed_kts / wind_dir_deg
+        from the layer at the aircraft's altitude. On any failure, carry the
+        previous values forward so a transient miss doesn't blank the wind."""
+        sid = self._ids.get(_WIND_SPEED_REF)
+        did = self._ids.get(_WIND_DIR_REF)
+        aid = self._ids.get(_WIND_ALT_REF)
+        if sid and did and aid:
+            try:
+                speeds = _extract_data(_http_get(f'{self._base}/api/v3/datarefs/{sid}/value'))
+                dirs   = _extract_data(_http_get(f'{self._base}/api/v3/datarefs/{did}/value'))
+                alts   = _extract_data(_http_get(f'{self._base}/api/v3/datarefs/{aid}/value'))
+                if speeds and dirs and alts:
+                    i = _pick_wind_layer(alts, new.elevation_m)
+                    i = min(i, len(speeds) - 1, len(dirs) - 1)
+                    new.wind_speed_kts = float(speeds[i])
+                    new.wind_dir_deg   = float(dirs[i])
+                    return
+            except Exception:
+                pass
+        new.wind_speed_kts = old.wind_speed_kts
+        new.wind_dir_deg   = old.wind_dir_deg
 
     def _poll(self) -> None:
         """Fetch all cached datarefs and update FlightState atomically."""
@@ -467,6 +507,10 @@ class XPlaneRestConnector:
                     setattr(new, field, float(value))
             except Exception:
                 pass  # keep previous value for this field
+
+        # Wind: pick the layer at the aircraft's altitude (elevation_m was just
+        # read above). Done after the scalar loop so elevation_m is current.
+        self._apply_wind(new, old)
 
         new._icao_chars = _str_to_chars(acf_icao, 4)
         new._tail_chars = _str_to_chars(tail, 10)
