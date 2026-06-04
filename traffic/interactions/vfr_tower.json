@@ -66,6 +66,52 @@
         { "speaker": "atc",   "text": "{callsign}, go around, traffic on the runway, climb runway heading." },
         { "speaker": "pilot", "text": "Going around, runway heading, {callsign}." }
       ]
+    },
+    {
+      "id": "twr_extend_downwind",
+      "station": "tower",
+      "flight_rules": "VFR",
+      "sizes": ["medium", "large"],
+      "weight": 0.5,
+      "lines": [
+        { "speaker": "atc",   "text": "{callsign}, extend downwind, number two, traffic on a long final." },
+        { "speaker": "pilot", "text": "Extending downwind, number two, {callsign}." }
+      ]
+    },
+    {
+      "id": "twr_orbit_spacing",
+      "station": "tower",
+      "flight_rules": "VFR",
+      "sizes": ["medium", "large"],
+      "weight": 0.4,
+      "lines": [
+        { "speaker": "atc",   "text": "{callsign}, orbit left for spacing, report back on downwind runway {runway}." },
+        { "speaker": "pilot", "text": "Orbit left, wilco, {callsign}." }
+      ]
+    },
+    {
+      "id": "twr_land_after",
+      "station": "tower",
+      "flight_rules": "VFR",
+      "sizes": ["medium", "large"],
+      "weight": 0.5,
+      "lines": [
+        { "speaker": "pilot", "text": "{atc_callsign}, {callsign}, final runway {runway}." },
+        { "speaker": "atc",   "text": "{callsign}, land after the departing traffic, runway {runway}, wind {wind}." },
+        { "speaker": "pilot", "text": "Land after the departing traffic, runway {runway}, {callsign}." }
+      ]
+    },
+    {
+      "id": "twr_blocked_transmission",
+      "station": "tower",
+      "flight_rules": "VFR",
+      "sizes": ["small", "medium", "large"],
+      "weight": 0.4,
+      "lines": [
+        { "speaker": "atc",   "text": "Station calling Tower, you were blocked, say again." },
+        { "speaker": "pilot", "text": "{atc_callsign}, {callsign}, ready for departure, runway {runway}." },
+        { "speaker": "atc",   "text": "{callsign}, runway {runway}, wind {wind}, cleared for take-off." }
+      ]
     }
   ]
 }

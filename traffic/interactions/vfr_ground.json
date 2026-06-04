@@ -1,5 +1,5 @@
 {
-  "_comment": "VFR ground chatter — startup, taxi, radio checks. Generic taxi phrasing only (no computed routes for other traffic). Edit freely or drop in your own *.json next to this one.",
+  "_comment": "VFR ground chatter — startup, taxi, radio checks, and minor non-routine events (blocked calls, read-back corrections, cautions). Generic taxi phrasing only (no computed routes for other traffic). Nothing major — no emergencies. Edit freely or drop in your own *.json next to this one.",
   "interactions": [
     {
       "id": "gnd_startup",
@@ -181,6 +181,90 @@
         { "speaker": "pilot", "text": "{atc_callsign}, {callsign}, request startup." },
         { "speaker": "atc",   "text": "{callsign}, startup approved, expect a short delay for departing traffic, QNH {qnh}." },
         { "speaker": "pilot", "text": "Startup approved, QNH {qnh}, {callsign}." }
+      ]
+    },
+    {
+      "id": "gnd_blocked_transmission",
+      "station": "ground",
+      "flight_rules": "VFR",
+      "sizes": ["small", "medium", "large"],
+      "weight": 0.5,
+      "lines": [
+        { "speaker": "atc",   "text": "Station calling, you were blocked, say again." },
+        { "speaker": "pilot", "text": "{atc_callsign}, {callsign}, request taxi, how do you read?" },
+        { "speaker": "atc",   "text": "{callsign}, loud and clear, taxi to holding point runway {runway}, QNH {qnh}." }
+      ]
+    },
+    {
+      "id": "gnd_readback_incomplete",
+      "station": "ground",
+      "flight_rules": "VFR",
+      "sizes": ["medium", "large"],
+      "weight": 0.5,
+      "lines": [
+        { "speaker": "pilot", "text": "{atc_callsign}, {callsign}, ready to taxi." },
+        { "speaker": "atc",   "text": "{callsign}, taxi to holding point runway {runway}, QNH {qnh}." },
+        { "speaker": "pilot", "text": "Taxi to holding point runway {runway}, {callsign}." },
+        { "speaker": "atc",   "text": "{callsign}, read back the QNH." },
+        { "speaker": "pilot", "text": "QNH {qnh}, {callsign}." }
+      ]
+    },
+    {
+      "id": "gnd_say_again",
+      "station": "ground",
+      "flight_rules": "VFR",
+      "sizes": ["small", "medium", "large"],
+      "weight": 0.4,
+      "lines": [
+        { "speaker": "atc",   "text": "{callsign}, taxi to holding point runway {runway}, QNH {qnh}." },
+        { "speaker": "pilot", "text": "Say again the QNH, {callsign}." },
+        { "speaker": "atc",   "text": "{callsign}, QNH {qnh}." }
+      ]
+    },
+    {
+      "id": "gnd_taxi_back_technical",
+      "station": "ground",
+      "flight_rules": "VFR",
+      "sizes": ["small", "medium"],
+      "weight": 0.4,
+      "lines": [
+        { "speaker": "pilot", "text": "{atc_callsign}, {callsign}, minor technical issue, request taxi back to parking." },
+        { "speaker": "atc",   "text": "{callsign}, roger, taxi back to general aviation, report on stand." },
+        { "speaker": "pilot", "text": "Taxi back to parking, {callsign}." }
+      ]
+    },
+    {
+      "id": "gnd_caution_vehicle",
+      "station": "ground",
+      "flight_rules": "VFR",
+      "sizes": ["medium", "large"],
+      "weight": 0.5,
+      "lines": [
+        { "speaker": "atc",   "text": "{callsign}, caution, a vehicle is operating on the apron ahead." },
+        { "speaker": "pilot", "text": "Caution vehicle, looking, {callsign}." }
+      ]
+    },
+    {
+      "id": "gnd_similar_callsigns",
+      "station": "ground",
+      "flight_rules": "VFR",
+      "sizes": ["medium", "large"],
+      "weight": 0.4,
+      "lines": [
+        { "speaker": "atc",   "text": "{callsign} and {callsign2}, similar callsigns on frequency, use your full callsign on every transmission." },
+        { "speaker": "pilot", "text": "Full callsign, {callsign}." }
+      ]
+    },
+    {
+      "id": "gnd_hold_for_tow",
+      "station": "ground",
+      "flight_rules": "VFR",
+      "sizes": ["large"],
+      "weight": 0.5,
+      "lines": [
+        { "speaker": "pilot", "text": "{atc_callsign}, {callsign}, ready to taxi." },
+        { "speaker": "atc",   "text": "{callsign}, hold position, a disabled aircraft is being towed, expect a few minutes delay." },
+        { "speaker": "pilot", "text": "Holding position, {callsign}." }
       ]
     }
   ]
