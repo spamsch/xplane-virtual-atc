@@ -318,9 +318,11 @@ def _ambient_plan():
         except Exception:
             airborne = False
 
-    # En route = airborne and tuned to an information/radar service (or nothing
-    # the airport recognises). En route is VFR-only, always, and has no airport.
-    enroute = airborne and st in (Station.FIS, Station.RADAR, None)
+    # En route = airborne and tuned to an information service (or nothing the
+    # airport recognises). En route is VFR-only, always, and has no airport.
+    # Radar/Departure is a controlled *airport* radar service with its own
+    # library, so it is NOT en route — it falls through to the airport branch.
+    enroute = airborne and st in (Station.FIS, None)
     if enroute:
         station_name = "fis"
         size = None

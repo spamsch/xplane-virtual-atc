@@ -1,0 +1,141 @@
+{
+  "_comment": "VFR Radar / Departure service at larger controlled fields (apt.dat freq code 56). A transponder-based radar service that works VFR departures climbing out, inbound traffic, and transits through controlled airspace — distinct from the en-route Information service (FIS). Airport-based (enroute=false), so it is filtered by size; defaults to medium/large. Uses {squawk} for discrete codes. Nothing major — no emergencies.",
+  "interactions": [
+    {
+      "id": "rad_identify",
+      "station": "radar",
+      "flight_rules": "VFR",
+      "sizes": ["medium", "large"],
+      "lines": [
+        { "speaker": "pilot", "text": "{atc_callsign}, {callsign}, VFR, request radar service." },
+        { "speaker": "atc",   "text": "{callsign}, {atc_callsign}, squawk {squawk} and ident." },
+        { "speaker": "pilot", "text": "Squawk {squawk}, ident, {callsign}." },
+        { "speaker": "atc",   "text": "{callsign}, identified, maintain VFR, QNH {qnh}." }
+      ]
+    },
+    {
+      "id": "rad_traffic_service",
+      "station": "radar",
+      "flight_rules": "VFR",
+      "sizes": ["medium", "large"],
+      "lines": [
+        { "speaker": "pilot", "text": "{atc_callsign}, {callsign}, request traffic service." },
+        { "speaker": "atc",   "text": "{callsign}, traffic service, squawk {squawk}, report heading and altitude." },
+        { "speaker": "pilot", "text": "Squawk {squawk}, heading 270, 3500 feet, {callsign}." }
+      ]
+    },
+    {
+      "id": "rad_traffic_info",
+      "station": "radar",
+      "flight_rules": "VFR",
+      "sizes": ["medium", "large"],
+      "lines": [
+        { "speaker": "atc",   "text": "{callsign}, traffic, eleven o'clock, 4 miles, opposite direction, indicating 3000 feet." },
+        { "speaker": "pilot", "text": "Looking, negative contact, {callsign}." },
+        { "speaker": "atc",   "text": "{callsign}, previous traffic no longer a factor." }
+      ]
+    },
+    {
+      "id": "rad_climb_out",
+      "station": "radar",
+      "flight_rules": "VFR",
+      "sizes": ["medium", "large"],
+      "lines": [
+        { "speaker": "pilot", "text": "{atc_callsign}, {callsign}, airborne runway {runway}, climbing to 4500 feet, request basic service." },
+        { "speaker": "atc",   "text": "{callsign}, identified, report leaving the zone." },
+        { "speaker": "pilot", "text": "Report leaving the zone, {callsign}." }
+      ]
+    },
+    {
+      "id": "rad_zone_transit",
+      "station": "radar",
+      "flight_rules": "VFR",
+      "sizes": ["medium", "large"],
+      "lines": [
+        { "speaker": "pilot", "text": "{atc_callsign}, {callsign}, request transit through your airspace, VFR, 2500 feet." },
+        { "speaker": "atc",   "text": "{callsign}, squawk {squawk}, cleared to transit, maintain VFR not above 3500 feet, QNH {qnh}." },
+        { "speaker": "pilot", "text": "Squawk {squawk}, transit not above 3500 feet, QNH {qnh}, {callsign}." }
+      ]
+    },
+    {
+      "id": "rad_descent_inbound",
+      "station": "radar",
+      "flight_rules": "VFR",
+      "sizes": ["large"],
+      "lines": [
+        { "speaker": "pilot", "text": "{atc_callsign}, {callsign}, inbound, request descent." },
+        { "speaker": "atc",   "text": "{callsign}, descend 3000 feet, QNH {qnh}, expect runway {runway}." },
+        { "speaker": "pilot", "text": "Descend 3000 feet, QNH {qnh}, expect runway {runway}, {callsign}." }
+      ]
+    },
+    {
+      "id": "rad_handoff_tower",
+      "station": "radar",
+      "flight_rules": "VFR",
+      "sizes": ["large"],
+      "weight": 0.8,
+      "lines": [
+        { "speaker": "pilot", "text": "{atc_callsign}, {callsign}, field in sight." },
+        { "speaker": "atc",   "text": "{callsign}, contact {airport} Tower, good day." }
+      ]
+    },
+    {
+      "id": "rad_leaving_ca",
+      "station": "radar",
+      "flight_rules": "VFR",
+      "sizes": ["medium", "large"],
+      "weight": 0.9,
+      "lines": [
+        { "speaker": "pilot", "text": "{atc_callsign}, {callsign}, leaving controlled airspace to the east." },
+        { "speaker": "atc",   "text": "{callsign}, roger, radar service terminated, squawk 7000, frequency change approved." },
+        { "speaker": "pilot", "text": "Squawk 7000, good day, {callsign}." }
+      ]
+    },
+    {
+      "id": "rad_freq_change_fis",
+      "station": "radar",
+      "flight_rules": "VFR",
+      "sizes": ["medium", "large"],
+      "weight": 0.7,
+      "lines": [
+        { "speaker": "pilot", "text": "{atc_callsign}, {callsign}, request frequency change to Information." },
+        { "speaker": "atc",   "text": "{callsign}, squawk 7000, contact Information, good day." }
+      ]
+    },
+    {
+      "id": "rad_maintain_vfr",
+      "station": "radar",
+      "flight_rules": "VFR",
+      "sizes": ["medium", "large"],
+      "weight": 0.6,
+      "lines": [
+        { "speaker": "atc",   "text": "{callsign}, maintain VFR, controlled traffic above descending into the field." },
+        { "speaker": "pilot", "text": "Maintaining VFR, {callsign}." }
+      ]
+    },
+    {
+      "id": "rad_squawk_recycle",
+      "station": "radar",
+      "flight_rules": "VFR",
+      "sizes": ["medium", "large"],
+      "weight": 0.5,
+      "lines": [
+        { "speaker": "atc",   "text": "{callsign}, your transponder is not showing, recycle and squawk {squawk}." },
+        { "speaker": "pilot", "text": "Recycling, squawk {squawk}, {callsign}." },
+        { "speaker": "atc",   "text": "{callsign}, identified now." }
+      ]
+    },
+    {
+      "id": "rad_standby_busy",
+      "station": "radar",
+      "flight_rules": "VFR",
+      "sizes": ["medium", "large"],
+      "weight": 0.4,
+      "lines": [
+        { "speaker": "pilot", "text": "{atc_callsign}, {callsign}, request basic service." },
+        { "speaker": "atc",   "text": "{callsign}, standby, high workload." },
+        { "speaker": "atc",   "text": "{callsign}, {atc_callsign}, pass your message." }
+      ]
+    }
+  ]
+}

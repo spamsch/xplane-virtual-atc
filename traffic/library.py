@@ -177,6 +177,18 @@ def random_callsign(flight_rules: str, rng: random.Random) -> str:
     return random_ifr_callsign(rng) if flight_rules.upper() == "IFR" else random_vfr_callsign(rng)
 
 
+_RESERVED_SQUAWKS = {"7500", "7600", "7700", "7000", "2000", "0000", "1200"}
+
+
+def random_squawk(rng: random.Random) -> str:
+    """A plausible discrete transponder code: four octal digits, not a reserved
+    code and not in the 7xxx block. For ambient radar/departure assignments."""
+    while True:
+        code = "".join(str(rng.randint(0, 7)) for _ in range(4))
+        if code not in _RESERVED_SQUAWKS and not code.startswith("7"):
+            return code
+
+
 # ─────────────────────────── rendering ───────────────────────────────────────
 
 @dataclass
@@ -225,6 +237,9 @@ def render(interaction: Interaction, ctx: RenderContext, rng: random.Random) -> 
         "qnh": (ctx.qnh or "").strip(),
         "wind": (ctx.wind or "").strip(),
         "airport": (ctx.airport or "").strip(),
+        # A discrete transponder code for this exchange — one per interaction so
+        # the assignment and its read-back match (mostly used by Radar/Departure).
+        "squawk": random_squawk(rng),
     }
 
     out: list[Line] = []

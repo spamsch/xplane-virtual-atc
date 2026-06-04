@@ -53,6 +53,120 @@
         { "speaker": "pilot", "text": "{atc_callsign}, {callsign}, request handover for landing." },
         { "speaker": "atc",   "text": "{callsign}, contact {airport} Tower, good day." }
       ]
+    },
+    {
+      "id": "fis_traffic_service",
+      "station": "fis",
+      "flight_rules": "VFR",
+      "enroute": true,
+      "lines": [
+        { "speaker": "pilot", "text": "{atc_callsign}, {callsign}, request traffic service." },
+        { "speaker": "atc",   "text": "{callsign}, traffic service, squawk {squawk}, report heading and altitude." },
+        { "speaker": "pilot", "text": "Squawk {squawk}, heading 090, 4500 feet, {callsign}." }
+      ]
+    },
+    {
+      "id": "fis_squawk_listening",
+      "station": "fis",
+      "flight_rules": "VFR",
+      "enroute": true,
+      "weight": 0.8,
+      "lines": [
+        { "speaker": "pilot", "text": "{atc_callsign}, {callsign}, VFR, 4500 feet, squawk 7000, listening out." },
+        { "speaker": "atc",   "text": "{callsign}, {atc_callsign}, roger, no reported traffic." }
+      ]
+    },
+    {
+      "id": "fis_qnh_regional",
+      "station": "fis",
+      "flight_rules": "VFR",
+      "enroute": true,
+      "weight": 0.7,
+      "lines": [
+        { "speaker": "pilot", "text": "{atc_callsign}, {callsign}, request regional QNH." },
+        { "speaker": "atc",   "text": "{callsign}, QNH {qnh}." }
+      ]
+    },
+    {
+      "id": "fis_danger_area",
+      "station": "fis",
+      "flight_rules": "VFR",
+      "enroute": true,
+      "weight": 0.6,
+      "lines": [
+        { "speaker": "pilot", "text": "{atc_callsign}, {callsign}, is the danger area ahead active?" },
+        { "speaker": "atc",   "text": "{callsign}, affirm, active up to 3500 feet, recommend remain clear to the north." },
+        { "speaker": "pilot", "text": "Remaining clear to the north, {callsign}." }
+      ]
+    },
+    {
+      "id": "fis_traffic_no_longer",
+      "station": "fis",
+      "flight_rules": "VFR",
+      "enroute": true,
+      "weight": 0.6,
+      "lines": [
+        { "speaker": "atc",   "text": "{callsign}, previous traffic no longer a factor." },
+        { "speaker": "pilot", "text": "Roger, {callsign}." }
+      ]
+    },
+    {
+      "id": "fis_level_report",
+      "station": "fis",
+      "flight_rules": "VFR",
+      "enroute": true,
+      "weight": 0.7,
+      "lines": [
+        { "speaker": "pilot", "text": "{atc_callsign}, {callsign}, climbing to 5500 feet." },
+        { "speaker": "atc",   "text": "{callsign}, roger, report reaching." }
+      ]
+    },
+    {
+      "id": "fis_airspace_warning",
+      "station": "fis",
+      "flight_rules": "VFR",
+      "enroute": true,
+      "weight": 0.6,
+      "lines": [
+        { "speaker": "atc",   "text": "{callsign}, controlled airspace ahead, recommend remain below 2500 feet or contact the radar service for a transit." },
+        { "speaker": "pilot", "text": "Remaining below 2500 feet, {callsign}." }
+      ]
+    },
+    {
+      "id": "fis_weather_request",
+      "station": "fis",
+      "flight_rules": "VFR",
+      "enroute": true,
+      "weight": 0.6,
+      "lines": [
+        { "speaker": "pilot", "text": "{atc_callsign}, {callsign}, request the latest weather at my destination." },
+        { "speaker": "atc",   "text": "{callsign}, destination reports wind {wind}, CAVOK, QNH {qnh}." },
+        { "speaker": "pilot", "text": "CAVOK, QNH {qnh}, {callsign}." }
+      ]
+    },
+    {
+      "id": "fis_standby_busy",
+      "station": "fis",
+      "flight_rules": "VFR",
+      "enroute": true,
+      "weight": 0.5,
+      "lines": [
+        { "speaker": "pilot", "text": "{atc_callsign}, {callsign}, request basic service." },
+        { "speaker": "atc",   "text": "{callsign}, standby." },
+        { "speaker": "atc",   "text": "{callsign}, {atc_callsign}, pass your message." }
+      ]
+    },
+    {
+      "id": "fis_position_check",
+      "station": "fis",
+      "flight_rules": "VFR",
+      "enroute": true,
+      "weight": 0.4,
+      "lines": [
+        { "speaker": "pilot", "text": "{atc_callsign}, {callsign}, request a position check, unsure of position." },
+        { "speaker": "atc",   "text": "{callsign}, no radar service on this frequency, report overhead a prominent landmark and your heading." },
+        { "speaker": "pilot", "text": "Overhead a motorway junction, heading 270, {callsign}." }
+      ]
     }
   ]
 }

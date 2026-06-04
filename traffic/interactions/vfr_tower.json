@@ -112,6 +112,156 @@
         { "speaker": "pilot", "text": "{atc_callsign}, {callsign}, ready for departure, runway {runway}." },
         { "speaker": "atc",   "text": "{callsign}, runway {runway}, wind {wind}, cleared for take-off." }
       ]
+    },
+    {
+      "id": "twr_lineup_wait",
+      "station": "tower",
+      "flight_rules": "VFR",
+      "sizes": ["medium", "large"],
+      "lines": [
+        { "speaker": "pilot", "text": "{atc_callsign}, {callsign}, holding point runway {runway}, ready." },
+        { "speaker": "atc",   "text": "{callsign}, line up runway {runway} and wait." },
+        { "speaker": "pilot", "text": "Line up and wait runway {runway}, {callsign}." }
+      ]
+    },
+    {
+      "id": "twr_immediate_takeoff",
+      "station": "tower",
+      "flight_rules": "VFR",
+      "sizes": ["medium", "large"],
+      "weight": 0.5,
+      "lines": [
+        { "speaker": "atc",   "text": "{callsign}, runway {runway}, cleared for immediate take-off, traffic 3 miles final." },
+        { "speaker": "pilot", "text": "Immediate take-off runway {runway}, {callsign}." }
+      ]
+    },
+    {
+      "id": "twr_hold_short_landing",
+      "station": "tower",
+      "flight_rules": "VFR",
+      "sizes": ["small", "medium", "large"],
+      "weight": 0.6,
+      "lines": [
+        { "speaker": "pilot", "text": "{atc_callsign}, {callsign}, holding point runway {runway}, ready for departure." },
+        { "speaker": "atc",   "text": "{callsign}, hold short runway {runway}, landing traffic." },
+        { "speaker": "pilot", "text": "Holding short runway {runway}, {callsign}." }
+      ]
+    },
+    {
+      "id": "twr_continue_approach",
+      "station": "tower",
+      "flight_rules": "VFR",
+      "sizes": ["medium", "large"],
+      "weight": 0.5,
+      "lines": [
+        { "speaker": "pilot", "text": "{atc_callsign}, {callsign}, final runway {runway}." },
+        { "speaker": "atc",   "text": "{callsign}, continue approach, runway {runway}, expect late landing clearance, traffic vacating." },
+        { "speaker": "pilot", "text": "Continue approach runway {runway}, {callsign}." }
+      ]
+    },
+    {
+      "id": "twr_cleared_option",
+      "station": "tower",
+      "flight_rules": "VFR",
+      "sizes": ["small", "medium"],
+      "lines": [
+        { "speaker": "pilot", "text": "{atc_callsign}, {callsign}, downwind runway {runway}, request the option." },
+        { "speaker": "atc",   "text": "{callsign}, runway {runway}, wind {wind}, cleared for the option." },
+        { "speaker": "pilot", "text": "Cleared for the option runway {runway}, {callsign}." }
+      ]
+    },
+    {
+      "id": "twr_report_final",
+      "station": "tower",
+      "flight_rules": "VFR",
+      "sizes": ["small", "medium", "large"],
+      "weight": 0.7,
+      "lines": [
+        { "speaker": "pilot", "text": "{atc_callsign}, {callsign}, downwind runway {runway}, full stop." },
+        { "speaker": "atc",   "text": "{callsign}, number one, report final runway {runway}." },
+        { "speaker": "pilot", "text": "Report final runway {runway}, {callsign}." }
+      ]
+    },
+    {
+      "id": "twr_wind_check",
+      "station": "tower",
+      "flight_rules": "VFR",
+      "sizes": ["small", "medium", "large"],
+      "weight": 0.5,
+      "lines": [
+        { "speaker": "pilot", "text": "{atc_callsign}, {callsign}, request wind check." },
+        { "speaker": "atc",   "text": "{callsign}, wind {wind}." }
+      ]
+    },
+    {
+      "id": "twr_short_approach",
+      "station": "tower",
+      "flight_rules": "VFR",
+      "sizes": ["medium", "large"],
+      "weight": 0.4,
+      "lines": [
+        { "speaker": "atc",   "text": "{callsign}, make short approach runway {runway}, traffic behind you on a long final." },
+        { "speaker": "pilot", "text": "Short approach runway {runway}, {callsign}." }
+      ]
+    },
+    {
+      "id": "twr_vacate_contact_ground",
+      "station": "tower",
+      "flight_rules": "VFR",
+      "sizes": ["medium", "large"],
+      "weight": 0.8,
+      "lines": [
+        { "speaker": "atc",   "text": "{callsign}, runway vacated, contact Ground, good day." },
+        { "speaker": "pilot", "text": "Contact Ground, good day, {callsign}." }
+      ]
+    },
+    {
+      "id": "twr_zone_transit",
+      "station": "tower",
+      "flight_rules": "VFR",
+      "sizes": ["medium", "large"],
+      "weight": 0.6,
+      "lines": [
+        { "speaker": "pilot", "text": "{atc_callsign}, {callsign}, request transit of your control zone, VFR, 2000 feet." },
+        { "speaker": "atc",   "text": "{callsign}, cleared to transit the zone, not above 2000 feet, squawk {squawk}, QNH {qnh}." },
+        { "speaker": "pilot", "text": "Transit the zone not above 2000 feet, squawk {squawk}, QNH {qnh}, {callsign}." }
+      ]
+    },
+    {
+      "id": "twr_remain_outside",
+      "station": "tower",
+      "flight_rules": "VFR",
+      "sizes": ["medium", "large"],
+      "weight": 0.4,
+      "lines": [
+        { "speaker": "pilot", "text": "{atc_callsign}, {callsign}, 4 miles south, request joining." },
+        { "speaker": "atc",   "text": "{callsign}, remain outside controlled airspace, expect join in 5 minutes, traffic in the circuit." },
+        { "speaker": "pilot", "text": "Remaining outside, {callsign}." }
+      ]
+    },
+    {
+      "id": "twr_overhead_join",
+      "station": "tower",
+      "flight_rules": "VFR",
+      "sizes": ["small", "medium"],
+      "weight": 0.5,
+      "lines": [
+        { "speaker": "pilot", "text": "{atc_callsign}, {callsign}, inbound, request overhead join." },
+        { "speaker": "atc",   "text": "{callsign}, join overhead 2000 feet, descend on the dead side, runway {runway}, QNH {qnh}." },
+        { "speaker": "pilot", "text": "Overhead join, runway {runway}, QNH {qnh}, {callsign}." }
+      ]
+    },
+    {
+      "id": "twr_low_approach",
+      "station": "tower",
+      "flight_rules": "VFR",
+      "sizes": ["small", "medium"],
+      "weight": 0.4,
+      "lines": [
+        { "speaker": "pilot", "text": "{atc_callsign}, {callsign}, final runway {runway}, request low approach." },
+        { "speaker": "atc",   "text": "{callsign}, runway {runway}, cleared low approach, report going around." },
+        { "speaker": "pilot", "text": "Cleared low approach runway {runway}, {callsign}." }
+      ]
     }
   ]
 }

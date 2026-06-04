@@ -262,6 +262,32 @@ class TestBuiltinLibrary:
         assert enroute
         assert all(it.flight_rules == "VFR" for it in enroute)
 
+    def test_radar_library_exists_and_is_airport_based(self):
+        lib = load_library()
+        radar = [it for it in lib.all if it.station == "radar"]
+        assert radar, "no radar interactions"
+        # Radar/Departure is an airport service, not en route, and VFR by default.
+        assert all(not it.enroute for it in radar)
+        assert all(it.flight_rules == "VFR" for it in radar)
+        # Reachable at a large field.
+        assert lib.candidates(station="radar", size="large", enroute=False)
+
+    def test_fis_has_wide_variety(self):
+        lib = load_library()
+        fis = [it for it in lib.all if it.station == "fis"]
+        assert len(fis) >= 10
+
+    def test_squawk_placeholder_filled_and_consistent(self):
+        import re
+        lib = load_library()
+        ctx = RenderContext(atc_callsign="Hannover Radar", runway="27R", qnh="1013")
+        it = next(i for i in lib.all if i.id == "rad_identify")
+        r = render(it, ctx, random.Random(9))
+        codes = re.findall(r"squawk (\d{4})", " ".join(ln.text for ln in r.lines))
+        assert codes, "no squawk rendered"
+        assert len(set(codes)) == 1                 # assignment and read-back match
+        assert not codes[0].startswith("7")          # discrete code, not a 7xxx
+
     def test_builtin_renders_without_braces(self):
         lib = load_library()
         ctx = RenderContext(atc_callsign="Hannover Tower", runway="27R",
