@@ -12,6 +12,7 @@ handling an unusual request, or the first transmission of a new session.
 
 import json
 import logging
+import re
 import subprocess
 import textwrap
 from typing import Any, Optional
@@ -96,12 +97,47 @@ Determine:
 2. The correct ATC station callsign (e.g. "Hannover Ground").
 3. Any relevant notes for VFR operations at this airport.
 
-Respond with valid JSON only, no commentary:
+Output ONLY the JSON object below — no reasoning, preamble, or explanation
+before or after it, and no markdown fences. Put any commentary in "notes".
 {{
   "active_runway": "<rwy designator, e.g. 27L>",
   "atc_callsign": "<full callsign, e.g. Hannover Ground>",
   "notes": "<brief operational note, max 2 sentences>"
 }}"""
+
+
+_JSON_FENCE_RE = re.compile(r"```(?:json)?\s*(\{.*\})\s*```", re.DOTALL | re.IGNORECASE)
+
+
+def _extract_json_object(raw: str) -> Optional[dict]:
+    """Pull a JSON object out of an LLM reply that may wrap it in prose and/or a
+    markdown fence. Some models now prepend a reasoning paragraph before the
+    JSON, so a plain json.loads of the whole reply fails — try, in order:
+      1. the contents of a ```json … ``` (or bare ``` … ```) fence,
+      2. the substring from the first '{' to the last '}',
+      3. the whole reply.
+    Returns the first candidate that parses to a dict, else None."""
+    s = raw.strip()
+    candidates: list[str] = []
+
+    m = _JSON_FENCE_RE.search(s)
+    if m:
+        candidates.append(m.group(1))
+
+    start, end = s.find("{"), s.rfind("}")
+    if 0 <= start < end:
+        candidates.append(s[start:end + 1])
+
+    candidates.append(s)
+
+    for c in candidates:
+        try:
+            obj = json.loads(c)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(obj, dict):
+            return obj
+    return None
 
 
 def boundary_check(airport: Airport, acft: Optional[AircraftPerf],
@@ -111,15 +147,11 @@ def boundary_check(airport: Airport, acft: Optional[AircraftPerf],
     prompt = _BOUNDARY_PROMPT.format(situation=situation)
     log.info(f"[Opus boundary check for {airport.icao}]")
     raw = _claude(prompt, model)
-    # Strip markdown code fences if present
-    raw = raw.strip().strip('`')
-    if raw.lower().startswith('json'):
-        raw = raw[4:].strip()
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        log.warning(f"Boundary check returned non-JSON: {raw[:200]}")
-        return {'active_runway': 'unknown', 'atc_callsign': f'{airport.name} Ground', 'notes': raw}
+    obj = _extract_json_object(raw)
+    if obj is not None:
+        return obj
+    log.warning(f"Boundary check returned non-JSON: {raw[:200]}")
+    return {'active_runway': 'unknown', 'atc_callsign': f'{airport.name} Ground', 'notes': raw}
 
 
 # ------------------------------------------------------------------ #
