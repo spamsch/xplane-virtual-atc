@@ -462,6 +462,54 @@ class TestStationFromFreq:
 
 
 # ------------------------------------------------------------------ #
+# Flight-situation awareness handed to the controller
+
+class TestFlightStatus:
+    def test_none_without_live_data(self, eddv, eddg, c172, conditions):
+        s = make_session(eddv, eddg, c172, conditions)
+        assert s._flight_status(None, None, None, None, None) is None
+
+    def test_on_ground_stationary_vs_taxiing(self, eddv, eddg, c172, conditions):
+        s = make_session(eddv, eddg, c172, conditions)
+        assert "stationary" in s._flight_status(True, 183, 0, eddv.lat, eddv.lon)
+        assert "taxiing" in s._flight_status(True, 183, 12, eddv.lat, eddv.lon)
+
+    def test_airborne_has_agl_distance_bearing_phase(self, eddv, eddg, c172, conditions):
+        s = make_session(eddv, eddg, c172, conditions)
+        s.phase = Phase.DEPARTING
+        st = s._flight_status(False, 1700, 90, eddv.lat, eddv.lon - 0.10)  # ~4 NM west
+        assert "airborne" in st and "AGL" in st
+        assert "NM" in st and "west" in st
+        assert "departing" in st
+
+    def test_status_passed_to_engine(self, eddv, eddg, c172, conditions):
+        s = make_session(eddv, eddg, c172, conditions)
+        with patch("atc.session.atc_engine.respond", return_value="D-EIYD, roger.") as m:
+            s.process("Hannover Tower, D-EIYD, airborne.",
+                      com1_mhz=118.175, lat=eddv.lat, lon=eddv.lon - 0.1,
+                      on_ground=False, altitude_ft=1700, gs_kts=90)
+        assert "airborne" in (m.call_args.kwargs["flight_status"] or "")
+
+
+class TestFrequencyRelease:
+    def test_not_cleared_initially(self, eddv, eddg, c172, conditions):
+        s = make_session(eddv, eddg, c172, conditions)
+        assert s.freq_change_cleared is False
+
+    def test_cleared_on_ctr_exit_phrase(self, eddv, eddg, c172, conditions):
+        s = make_session(eddv, eddg, c172, conditions)
+        with mock_respond("D-EIYD, frequency change approved, squawk 7000, good day."):
+            s.process("D-EIYD, request frequency change.")
+        assert s.freq_change_cleared is True
+
+    def test_cleared_on_handoff_frequency(self, eddv, eddg, c172, conditions):
+        s = make_session(eddv, eddg, c172, conditions)
+        with mock_respond("D-EIYD, contact Hannover Radar 120.150, good day."):
+            s.process("D-EIYD, leaving the zone.")
+        assert s.freq_change_cleared is True
+
+
+# ------------------------------------------------------------------ #
 # extra_instructions are passed to the engine
 
 class TestExtraInstructions:

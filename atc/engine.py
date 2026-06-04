@@ -54,7 +54,8 @@ def _claude(prompt: str, model: str, timeout: int = 90) -> str:
 
 def _build_situation(airport: Airport, acft: Optional[AircraftPerf],
                      callsign: str, conditions: dict,
-                     destination: Optional[Airport] = None) -> str:
+                     destination: Optional[Airport] = None,
+                     flight_status: Optional[str] = None) -> str:
     lines = [
         f"Airport     : {airport.name} ({airport.icao}), elevation {airport.elevation_ft} ft",
     ]
@@ -66,6 +67,8 @@ def _build_situation(airport: Airport, acft: Optional[AircraftPerf],
         f"Aircraft    : {acft.describe() if acft else f'unknown type, callsign {callsign}'}",
         f"Callsign    : {callsign}",
     ]
+    if flight_status:
+        lines.append(f"Flight phase: {flight_status}")
     if conditions.get('stand'):
         lines.append(f"Stand       : {conditions['stand']}")
     lines += [
@@ -181,6 +184,15 @@ Rules:
   (e.g. "taxi to the holding point for runway 27, follow the green centreline").
 - If the request is outside your authority (e.g. pilot asks tower questions to
   ground), redirect them politely to the correct frequency.
+- You ARE {atc_callsign}. NEVER tell the pilot to contact {atc_callsign} or to
+  switch to your own frequency — they are already talking to you. Hand off only
+  to a DIFFERENT station: after take-off, a Tower hands the aircraft to Departure
+  or Radar (use the frequency list above), not back to Tower.
+- Match every instruction to the Flight phase above. If the aircraft is AIRBORNE,
+  do NOT issue ground instructions — no taxi, no "report runway vacated", no
+  "hold short", no "line up". If it is ON THE GROUND, do not give airborne
+  instructions. A departing aircraft that has just lifted off gets a climb/turn,
+  a frequency change, or "report leaving the zone" — never a taxi or vacate call.
 
 {examples}{extra_block}"""
 
@@ -194,9 +206,11 @@ def respond(pilot_message: str,
             history: list,
             model: str,
             extra_instructions: Optional[str] = None,
-            destination: Optional[Airport] = None) -> str:
+            destination: Optional[Airport] = None,
+            flight_status: Optional[str] = None) -> str:
 
-    situation = _build_situation(airport, acft, callsign, conditions, destination)
+    situation = _build_situation(airport, acft, callsign, conditions, destination,
+                                 flight_status=flight_status)
     history_text = '\n'.join(
         f"  Pilot: {h['pilot']}\n  ATC:   {h['atc']}"
         for h in history[-6:]

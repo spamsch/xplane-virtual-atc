@@ -65,7 +65,7 @@ from airport.parser import parse_apt_dat, Airport
 from airport.database import AirportDB
 from atc import engine as atc_engine
 from atc.parser import parse as parse_radio_call
-from atc.session import ATCSession, Station
+from atc.session import ATCSession, Station, _dist_bearing_nm
 from traffic.library import (
     load_library, classify_size, render as _render_interaction,
     RenderContext, InteractionLibrary,
@@ -676,17 +676,22 @@ async def _process_transmission_locked(text: str):
 
         # Pass live COM1 (X-Plane only) so a handed-off station won't answer
         # until the pilot has actually tuned to its frequency. Position (any
-        # source) lets the session compute a real taxi route on the ground.
-        com1 = lat = lon = None
+        # source) lets the session compute a real taxi route on the ground, and
+        # the on-ground/altitude/groundspeed give the controller phase awareness.
+        com1 = lat = lon = on_ground = altitude_ft = gs_kts = None
         if _driver is not None:
             st = _driver.state
             if st.is_flight_loaded:
                 lat, lon = st.lat, st.lon
+                on_ground = st.on_ground > 0.5
+                altitude_ft = st.alt_ind_ft
+                gs_kts = st.gs_kts
                 if _source == "xplane":
                     com1 = st.com1_mhz
 
         # session.process() is blocking (calls claude subprocess)
-        r = await asyncio.to_thread(_session.process, text, com1, lat, lon)
+        r = await asyncio.to_thread(
+            _session.process, text, com1, lat, lon, on_ground, altitude_ft, gs_kts)
 
         # Pilot called a station they haven't tuned to — no reply, just a nudge.
         if r.on_wrong_frequency:
@@ -1178,6 +1183,54 @@ async def _xplane_probe_loop():
         await asyncio.sleep(2.0)
 
 
+# Control-zone proxy radius (NM). apt.dat carries no airspace boundaries, so we
+# approximate "still inside the control zone" by distance from the field — a CTR
+# is typically ~5 NM. Inside this, an airborne aircraft is not handed off.
+_CTR_RADIUS_NM = 6.0
+
+
+def _com1_matches_airport(airport: Airport, com1_mhz: float) -> bool:
+    """Is COM1 tuned to one of this airport's published frequencies?"""
+    if not com1_mhz:
+        return False
+    return any(abs(f.freq_mhz - com1_mhz) <= 0.02 for f in airport.frequencies)
+
+
+def _should_adopt_airport(new_airport: Airport, state: FlightState) -> bool:
+    """Decide whether to hand the session over to a newly-nearest airport.
+
+    The detector finds the closest field by position — wrong to act on while you
+    climb out of your departure field and merely overfly a neighbour: you're
+    still in its zone, on its frequency, and haven't been released. Rules:
+
+      - On the ground at the new field → adopt (you taxied in / landed there).
+      - Explicitly tuned to the new field's frequency → adopt (clear intent).
+      - Otherwise, while airborne, do NOT hand over if any of these hold:
+          * still inside the current field's control zone (distance proxy), or
+          * still tuned to one of the current field's frequencies, or
+          * the controller hasn't cleared a frequency change / CTR exit yet.
+    """
+    cur = _current_airport
+    if cur is None:
+        return True
+    if state.on_ground > 0.5:
+        return True
+    if _source == "xplane" and _com1_matches_airport(new_airport, state.com1_mhz):
+        return True   # pilot has dialled the new field in — honour it
+
+    try:
+        nm, _ = _dist_bearing_nm(cur.lat, cur.lon, state.lat, state.lon)
+    except Exception:
+        nm = _CTR_RADIUS_NM + 1
+    if nm <= _CTR_RADIUS_NM:
+        return False  # still inside the control zone
+    if _source == "xplane" and _com1_matches_airport(cur, state.com1_mhz):
+        return False  # still working the current station's frequency
+    if _session is not None and not _session.freq_change_cleared:
+        return False  # not yet cleared to leave the frequency
+    return True
+
+
 async def _state_poll_loop():
     global _startup_vfr_done
     last_airport_check = 0.0
@@ -1204,7 +1257,9 @@ async def _state_poll_loop():
                     if _airport_db and now - last_airport_check > 10.0:
                         last_airport_check = now
                         airport = _airport_db.nearest(state.lat, state.lon)
-                        if airport and airport.icao != (_current_airport.icao if _current_airport else ""):
+                        if (airport
+                                and airport.icao != (_current_airport.icao if _current_airport else "")
+                                and _should_adopt_airport(airport, state)):
                             log.info(
                                 f"Airport detected: {airport.icao} ({airport.name}) "
                                 f"from position {state.lat:.4f},{state.lon:.4f}"

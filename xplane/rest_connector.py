@@ -63,8 +63,13 @@ _DATAREFS: dict[str, str] = {
     'sim/aircraft/view/acf_ICAO':                  '_acf_icao_str',
     'sim/aircraft/view/acf_tailnum':               '_tail_str',
     # Weather — scalar floats in X-Plane 12 (these were arrays in XP11).
+    # Wind: read the wind *at the aircraft* (what the ATIS/Tower reports and what
+    # the sim's weather display shows), not the legacy sim/weather/wind_speed_kt,
+    # which in XP12 no longer tracks the surface wind (it read ~3 kt with a real
+    # 21 kt wind). wind_speed_msc is metres/second → FlightState.wind_speed_kts
+    # converts. Direction stays on the proven degt dataref.
     'sim/weather/barometer_sealevel_inhg':         'qnh_inhg',
-    'sim/weather/wind_speed_kt':                   'wind_speed_kts',
+    'sim/weather/aircraft/wind_speed_msc':         'wind_speed_msc',
     'sim/weather/wind_direction_degt':             'wind_dir_deg',
 }
 

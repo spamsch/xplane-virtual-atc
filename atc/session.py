@@ -135,6 +135,31 @@ def _generate_squawk() -> str:
             return code
 
 
+_COMPASS_8 = ('north', 'north-east', 'east', 'south-east',
+              'south', 'south-west', 'west', 'north-west')
+
+
+def _compass(bearing_deg: float) -> str:
+    """8-point compass name for a bearing in degrees."""
+    return _COMPASS_8[int((bearing_deg % 360) / 45.0 + 0.5) % 8]
+
+
+def _dist_bearing_nm(lat1: float, lon1: float, lat2: float, lon2: float) -> tuple[float, float]:
+    """Great-circle distance (NM) and initial bearing (deg) FROM point 1 (the
+    field) TO point 2 (the aircraft) — i.e. which way the aircraft lies."""
+    import math
+    R_NM = 3440.065
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dl = math.radians(lon2 - lon1)
+    a = math.sin(dphi / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    dist = 2 * R_NM * math.asin(min(1.0, math.sqrt(a)))
+    y = math.sin(dl) * math.cos(p2)
+    x = math.cos(p1) * math.sin(p2) - math.sin(p1) * math.cos(p2) * math.cos(dl)
+    brg = (math.degrees(math.atan2(y, x)) + 360) % 360
+    return dist, brg
+
+
 # Tolerance for matching live COM1 to a handoff frequency, in MHz. 0.02 covers
 # 8.33 kHz channels labelled at 25 kHz spacing and float rounding, without
 # letting an adjacent 25 kHz channel slip through.
@@ -225,6 +250,10 @@ class ATCSession:
 
         self.squawk: Optional[str] = None
         self.squawk_history: list[str] = []
+        # True once the controller has released us from the current frequency —
+        # a "frequency change approved", CTR exit, or a handoff to another freq.
+        # Until then, an airborne aircraft must not be handed to a new airport.
+        self.freq_change_cleared: bool = False
 
         self._history: list[dict] = []
         self._stations_seen: set[Station] = set()   # stations that have had ≥1 response
@@ -240,7 +269,10 @@ class ATCSession:
     def process(self, pilot_message: str,
                 com1_mhz: Optional[float] = None,
                 lat: Optional[float] = None,
-                lon: Optional[float] = None) -> ATCResponse:
+                lon: Optional[float] = None,
+                on_ground: Optional[bool] = None,
+                altitude_ft: Optional[float] = None,
+                gs_kts: Optional[float] = None) -> ATCResponse:
         """Generate the ATC reply to a pilot transmission.
 
         com1_mhz: the aircraft's live COM1 frequency, if known. When provided,
@@ -252,6 +284,12 @@ class ATCSession:
         lat/lon: the aircraft's live position. When known on the ground, a real
         taxi route is computed from the airport's apt.dat taxi network and handed
         to the controller, so it never invents taxiways or holding points.
+
+        on_ground / altitude_ft / gs_kts: the live flight situation. When known,
+        a short situation summary (on the ground vs airborne + height AGL,
+        distance and bearing from the field, taxiing vs stationary, phase) is
+        handed to the controller so it gives phase-appropriate instructions —
+        e.g. it won't tell an airborne aircraft to report runway vacated.
         """
         call = parse_radio_call(pilot_message)
 
@@ -317,6 +355,7 @@ class ATCSession:
             model=model,
             extra_instructions='\n'.join(extra_parts) if extra_parts else None,
             destination=self.destination,
+            flight_status=self._flight_status(on_ground, altitude_ft, gs_kts, lat, lon),
         )
 
         self._stations_seen.add(self.current_station)
@@ -352,6 +391,7 @@ class ATCSession:
             self.phase = Phase.EN_ROUTE
         elif trigger == 'ctr_exit':
             self.phase = Phase.EN_ROUTE
+            self.freq_change_cleared = True   # released from the zone/frequency
             if '7000' not in self.squawk_history:
                 self.squawk_history.append('7000')
         elif trigger == 'land':
@@ -365,6 +405,7 @@ class ATCSession:
         # --- Station transition from handoff frequency in response ---
         freq_change: Optional[float] = parsed.get('frequency_change')
         if freq_change:
+            self.freq_change_cleared = True   # controller handed us to another freq
             new_station = self._station_from_freq(freq_change)
             if new_station and new_station != self.current_station:
                 if com1_mhz is None:
@@ -443,6 +484,44 @@ class ATCSession:
         city = self.current_airport.name.split()[0]
         label = _STATION_LABELS.get(self.current_station, 'Radio')
         return f"{city} {label}"
+
+    def _flight_status(self,
+                       on_ground: Optional[bool],
+                       altitude_ft: Optional[float],
+                       gs_kts: Optional[float],
+                       lat: Optional[float],
+                       lon: Optional[float]) -> Optional[str]:
+        """A compact, human-readable summary of where the aircraft actually is,
+        for the controller's situational awareness. Returns None when we know
+        nothing live (CLI / tests) so the prompt is unchanged there."""
+        phase = self.phase.value.replace('_', ' ')
+        if on_ground is None and altitude_ft is None and lat is None:
+            return None
+
+        parts: list[str] = []
+        if on_ground is True:
+            moving = (gs_kts or 0) > 3
+            parts.append("on the ground" + (", taxiing" if moving else ", stationary"))
+        elif on_ground is False:
+            s = "airborne"
+            if altitude_ft is not None:
+                s += f" {int(round(altitude_ft)):,} ft"
+                if self.current_airport is not None:
+                    agl = altitude_ft - self.current_airport.elevation_ft
+                    if agl > 50:
+                        s += f" ({int(round(agl)):,} ft AGL)"
+            parts.append(s)
+
+        # Distance and bearing from the field — lets the controller reason about
+        # departing the zone / arriving / overflying.
+        if (lat is not None and lon is not None and self.current_airport is not None):
+            nm, brg = _dist_bearing_nm(
+                self.current_airport.lat, self.current_airport.lon, lat, lon)
+            if nm >= 0.6:
+                parts.append(f"{nm:.0f} NM {_compass(brg)} of {self.current_airport.icao}")
+
+        parts.append(f"phase {phase}")
+        return ", ".join(parts)
 
     def _taxi_instruction(self, lat: Optional[float], lon: Optional[float]) -> str:
         """Ground taxi guidance for the LLM. With position + active runway + a
