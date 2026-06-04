@@ -74,9 +74,11 @@ class TestResolveElevenLabsVoice:
         assert config.resolve_elevenlabs_voice("") == config.ELEVENLABS_VOICE_LIBRARY["daniel"]
         assert config.resolve_elevenlabs_voice(None) == config.ELEVENLABS_VOICE_LIBRARY["daniel"]
 
-    def test_default_voice_id_is_daniel(self):
-        # The resolved module default must be a real id, never the name.
-        assert config.ELEVENLABS_VOICE_ID == config.ELEVENLABS_VOICE_LIBRARY["daniel"]
+    def test_configured_voice_is_a_resolved_id(self):
+        # Whatever the environment / .env says, the module always exposes a
+        # resolved voice id — never a bare library name like "charlie".
+        assert config.ELEVENLABS_VOICE_ID
+        assert config.ELEVENLABS_VOICE_ID not in config.ELEVENLABS_VOICE_LIBRARY
 
 
 class TestPilotPool:

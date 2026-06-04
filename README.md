@@ -69,7 +69,8 @@ Prefer to run from source, or on another platform? Same requirements as [What yo
 - **Drives a real state machine.** Phase and station transitions are triggered by keyword matching on the controller's output — the LLM suggests, the state machine decides. Squawk lifecycle, frequency handoffs, and the 10 flight phases are all deterministic, so behavior stays predictable even when the model gets creative.
 - **Handoffs you actually have to fly.** When live in X-Plane, a station the controller hands you off to won't answer until you've tuned COM1 to its frequency — call early and you get "no reply, set COM1 to…" instead of a free pass.
 - **Push-to-talk that feels right.** Key the mic from the UI, the spacebar, or a bound X-Plane control. You get a mechanical relay *clack* on key and a squelch-tail hiss on unkey, synthesized in the browser.
-- **Voice in and out.** Optional speech-to-text (ElevenLabs Scribe, OpenAI, or a local ATC-fine-tuned Whisper model) and text-to-speech (ElevenLabs, OpenAI, Piper, or macOS `say`). Before synthesis the text is normalized to spoken radio form (`D-EIYD` → "Delta Echo India Yankee Delta", `27R` → "two seven Right"), then a radio-DSP pass band-limits the voice and adds VHF hiss.
+- **Voice in and out.** Optional speech-to-text (ElevenLabs Scribe, OpenAI, or a local ATC-fine-tuned Whisper model) and text-to-speech (ElevenLabs, OpenAI, Piper, or macOS `say`). Before synthesis the text is normalized to spoken radio form (`D-EIYD` → "Delta Echo India Yankee Delta", `27R` → "two seven Right"), then a radio-DSP pass band-limits the voice and adds VHF hiss. Pick the controller's voice by name from a curated list (or any ElevenLabs id).
+- **A frequency that isn't dead air.** With X-Plane connected, other aircraft work the same controller in the background — startup and taxi on Ground, the circuit and clearances on Tower, inbound calls on Approach, flight-information chatter en route. The traffic matches the frequency you're tuned to (no Tower calls on Ground), fits the airport's size, and runs on a single half-duplex channel so nothing keys over your reply. It goes silent the instant you press to talk — and afterwards the controller sometimes works one other aircraft before turning back to you. Each aircraft gets its own voice (drawn from a pool of ten) and its own radio character. Density is off / light / medium / heavy; the scripts are JSON you can edit or add to. VFR only for now.
 - **Knows when the sim is there.** The status bar shows a live X-Plane link indicator (LINKED / NO LINK), and PTT only listens while the sim is actually connected.
 
 ## How it works
@@ -90,6 +91,7 @@ Three layers compose cleanly: a **data source**, an **ATC session engine**, and 
 - **Data source** — `xplane/rest_connector.py` (REST, the default for X-Plane 12.1+), `xplane/connector.py` (UDP/RREF), or `xplane/simulator.py` (scenario replay). All three satisfy the same informal `FlightDataSource` protocol — a `.state` property returning a `FlightState`. Everything downstream is source-agnostic.
 - **Airport data** — `airport/parser.py` streams and parses `apt.dat` (~500 MB) once and caches a pickle next to it. `airport/database.py` wraps it with a 1°×1° spatial grid for O(1) candidate lookup and haversine ranking.
 - **ATC engine** — `atc/session.py` is the state machine (10 phases, 6 station types, squawk lifecycle, handoff detection). `atc/engine.py` wraps the `claude` CLI: a `boundary_check` call (Opus) determines the active runway and controller callsign per airport, then `respond` generates each transmission.
+- **Ambient traffic** — `traffic/library.py` holds a JSON library of scripted other-aircraft exchanges, filtered by station, airport size, and flight rules; `traffic/ambient.py` paces them by level (light/medium/heavy). It's pure and stdlib-only — the backend renders the lines, voices them, and plays them through the same radio-DSP and the same half-duplex channel as the controller, so the party line never talks over your reply.
 - **Transport** — `backend/server.py` is an asyncio WebSocket server that polls flight state, detects airport changes, and fans LLM calls out to a thread pool. `main.py` is the synchronous CLI doing the same flow without the WebSocket machinery. The UI in `ui/` is a Tauri 2 app wrapping a Svelte 5 frontend with auto-reconnect.
 
 Design notes live in [`CLAUDE.md`](CLAUDE.md).
@@ -144,7 +146,7 @@ The suite is fully mocked — no X-Plane and no live Claude needed.
 
 ```bash
 pip install -r requirements-dev.txt
-pytest tests/                                # 342 tests
+pytest tests/                                # 435 tests
 pytest tests/test_session.py -v              # one file
 pytest tests/ -k squawk                      # by name
 ```
@@ -167,15 +169,27 @@ The easiest path is the in-app **Settings view** (gear icon, top-right) — it s
 | `OPENAI_API_KEY` | *(empty)* | Enables OpenAI STT/TTS when set |
 | `ELEVENLABS_API_KEY` | *(empty)* | Enables ElevenLabs STT + TTS; preferred by `auto` when set |
 | `ELEVENLABS_TTS_MODEL` | `eleven_flash_v2_5` | TTS model — flash is the low-latency choice for live ATC |
-| `ELEVENLABS_VOICE_ID` | `onwK4e9ZLuTAKqWW03F9` | Voice **id** (default: Daniel, British broadcaster) |
+| `ELEVENLABS_VOICE_ID` | `daniel` | Controller voice — a name from the curated list (`daniel`, `brian`, `george`, …) or any raw voice id |
 | `ELEVENLABS_TTS_SPEED` | `1.2` | Speech rate, 0.7–1.2 (1.2 = max; the brisk cadence of a busy controller) |
 | `ELEVENLABS_STT_MODEL` | `scribe_v1` | Scribe transcription model (`scribe_v1` / `scribe_v2`) |
+| `AMBIENT_TRAFFIC_LEVEL` | `medium` | Background traffic density — `off` \| `light` \| `medium` \| `heavy` |
+| `AMBIENT_TRAFFIC_RULES` | `VFR` | Flight rules the traffic flies — `VFR`, or `VFR,IFR` to mix in airliners |
+| `AMBIENT_PILOT_VOICES` | *(empty)* | Override the other-pilots voice pool; empty = backend default (10 voices on ElevenLabs) |
+| `AMBIENT_LIBRARY_DIR` | *(empty)* | Extra interaction `*.json` files, merged over the built-in library |
 
 ### Speech providers
 
 With `ELEVENLABS_API_KEY` set, `auto` selects ElevenLabs for both STT and TTS — the lowest-latency option (measured ~0.4 s TTS, ~1 s STT on short ATC lines). TTS defaults to the fast `eleven_flash_v2_5` model, a steady broadcaster voice, and a slightly quick 1.2× rate; pick any voice id from the [ElevenLabs voice library](https://elevenlabs.io/app/voice-library). STT uses ElevenLabs Scribe. Because flash has no pronunciation controls, the spoken text is normalized first (callsigns → NATO, frequencies/squawks/QNH → spoken digits) so any backend reads it like a controller — German place names are left intact.
 
 **On the LLM:** ATC *text* is still generated by the `claude` CLI, not ElevenLabs. ElevenLabs has no single-turn text-completion endpoint; its only text-in/text-out REST path (the agent `simulate-conversation` eval endpoint) runs ~7 s and synthesizes its own user persona rather than answering a given transmission. Its production LLM path is the realtime voice agent, which would replace the deterministic state machine — not a fit here. So: ElevenLabs for voice, Claude for decisions.
+
+### Background traffic
+
+When you're connected to X-Plane, the frequency carries other aircraft talking to the same controller. It's on by default at `medium` — set `AMBIENT_TRAFFIC_LEVEL` to `off`, `light`, or `heavy` (in the app, the Settings view has a selector; the level is saved to `.env`). The level controls two things: how long the frequency stays quiet between exchanges, and how often the controller works one other aircraft right after you transmit, before answering you.
+
+What you hear is matched to the moment. The script library is filtered by the station you're actually tuned to (Ground / Tower / Approach / FIS, read from your live COM1, so Tower traffic never appears on Ground), by the airport's size (a sleepy GA strip gets less and simpler chatter than a large controlled field), and by flight rules. It's VFR-only by default; `AMBIENT_TRAFFIC_RULES=VFR,IFR` mixes airline traffic in at a field, and en route is always VFR. Keying the mic cuts the traffic immediately — a radio is half-duplex.
+
+The chatter scripts are plain JSON in [`traffic/interactions/`](traffic/interactions) — one file per station, each a short multi-line exchange with `{placeholders}` (callsign, runway, QNH, …). Edit them, or drop your own `*.json` into a folder and point `AMBIENT_LIBRARY_DIR` at it; your files merge on top of the built-ins. Each aircraft is given a voice from a pool (ten ElevenLabs voices by default, deliberately excluding the controller's), seeded by its callsign so it stays consistent, plus a randomised radio character so the party line sounds like many different sets. Override the pool with `AMBIENT_PILOT_VOICES`.
 
 ### Push-to-talk
 
@@ -196,9 +210,10 @@ xplane/       REST connector, UDP connector, scenario simulator
 airport/      apt.dat parser + spatial database
 aircraft/     aircraft type lookup
 audio/        STT, TTS, and radio DSP
+traffic/      ambient party-line library + pacing (interactions/*.json)
 scenarios/    JSON scenarios for the simulator data source
 ui/           Tauri 2 + SvelteKit 5 desktop app
-tests/        342 mocked tests
+tests/        435 mocked tests
 ```
 
 ## License
