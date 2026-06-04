@@ -2,7 +2,7 @@
 
 **Talk to a real-sounding air traffic controller while you fly [X-Plane 12](https://www.x-plane.com/).** Hold a button, say what you'd say on the radio, and a controller — powered by Claude — answers in a proper radio voice: taxi clearances, the runway in use, frequency handoffs, squawk codes, the works. It reads your actual position, altitude, and radios from the sim, and knows the real layout of the airport you're at.
 
-![X-Plane Virtual ATC — a live Hannover Ground exchange in the Technical theme](docs/app-running.png)
+![X-Plane Virtual ATC — a live Hannover (EDDV) Ground session: aircraft state and live weather at left, the radio exchange (with background traffic) in the centre, runways and frequencies at right](docs/app-display.png)
 
 ## What you need
 
