@@ -1,6 +1,6 @@
 [package]
 name = "xplane-virtual-atc"
-version = "0.1.6"
+version = "0.1.7"
 description = "X-Plane Virtual ATC — a talking VFR air traffic controller for X-Plane 12"
 authors = ["X-Plane Virtual ATC contributors"]
 edition = "2021"
