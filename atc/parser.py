@@ -12,6 +12,9 @@ import re
 from dataclasses import dataclass
 from typing import Optional
 
+# Order matters: the first keyword found (word-boundary) wins, so the controlling
+# stations are listed before 'information'/'info'. That way a Ground call that
+# merely mentions "…request taxi information" still resolves to GND, not FIS.
 _STATION_KEYWORDS: dict = {
     'ground': 'GND',
     'gnd': 'GND',
@@ -20,11 +23,14 @@ _STATION_KEYWORDS: dict = {
     'approach': 'APP',
     'departure': 'DEP',
     'dep': 'DEP',
+    'radar': 'RADAR',
     'clearance': 'CLD',
     'delivery': 'CLD',
-    'atis': 'ATIS',
-    'information': 'ATIS',
-    'radio': 'RADIO',
+    'information': 'FIS',
+    'info': 'FIS',
+    'fis': 'FIS',
+    'radio': 'FIS',          # A/G radio / AFIS — an information service
+    'atis': 'ATIS',          # recorded weather (kept distinct from live FIS)
     'unicom': 'CTAF',
 }
 
@@ -78,7 +84,7 @@ def format_station(airport_name: str, station: str) -> str:
     """Produce the ATC station callsign, e.g. 'Hannover Ground'."""
     labels = {
         'GND': 'Ground', 'TWR': 'Tower', 'APP': 'Approach',
-        'DEP': 'Departure', 'CLD': 'Clearance', 'ATIS': 'Information',
-        'CTAF': 'Traffic', 'RADIO': 'Radio',
+        'DEP': 'Departure', 'RADAR': 'Radar', 'CLD': 'Clearance',
+        'FIS': 'Information', 'ATIS': 'Information', 'CTAF': 'Traffic',
     }
     return f"{airport_name} {labels.get(station, station)}"

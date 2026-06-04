@@ -152,10 +152,11 @@ _PARSER_TO_STATION: dict[str, Station] = {
     'GND':   Station.GND,
     'TWR':   Station.TWR,
     'APP':   Station.APP,
-    'DEP':   Station.DEP,
+    'DEP':   Station.RADAR, # "Departure" is the Radar service in German airspace
     'RADAR': Station.RADAR,
     'CLD':   Station.GND,   # clearance delivery handled by Ground in this engine
-    'ATIS':  Station.FIS,
+    'FIS':   Station.FIS,   # "Information" — the flight information service
+    'ATIS':  Station.FIS,   # recorded ATIS has no live station; treat a call as FIS
     'CTAF':  Station.GND,
 }
 

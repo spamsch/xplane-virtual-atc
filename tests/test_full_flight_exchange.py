@@ -45,9 +45,9 @@ Station → parser mapping (atc.parser.parse() emits string codes; session maps 
     parser "GND"  → Station.GND
     parser "TWR"  → Station.TWR
     parser "APP"  → Station.APP
-    parser "DEP"  → Station.DEP
-    parser "ATIS" → Station.FIS   (Langen Information calls use "Information" → "ATIS")
-    "Radar" in callout → Station.RADAR (parser doesn't know this yet; session must handle)
+    parser "DEP"  → Station.RADAR  ("Departure" is the Radar service in German airspace)
+    parser "FIS"  → Station.FIS    ("Information" / "info" / "fis"; recorded "ATIS" also → FIS)
+    parser "RADAR"→ Station.RADAR  ("Radar" callouts)
 
 Phase enum values (minimum required):
     PRE_DEPARTURE, GROUND_DEPARTURE, TAXIING, DEPARTING, EN_ROUTE,

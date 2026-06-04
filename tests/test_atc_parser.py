@@ -70,6 +70,27 @@ class TestParse:
         c = parse("Hannover Departure D-EIYD checking in")
         assert c.station == "DEP"
 
+    def test_information_is_fis(self):
+        c = parse("Langen Information D-EIYD, VFR, request basic service")
+        assert c.station == "FIS"
+        assert c.callsign == "D-EIYD"
+
+    def test_info_abbreviation_is_fis(self):
+        assert parse("Bremen Info D-EIYD").station == "FIS"
+
+    def test_fis_keyword_is_fis(self):
+        assert parse("Munich FIS D-EIYD").station == "FIS"
+
+    def test_radar_station(self):
+        c = parse("Hannover Radar D-EIYD, request traffic service")
+        assert c.station == "RADAR"
+
+    def test_information_in_message_does_not_override_ground(self):
+        # A Ground call that merely mentions "information" must stay GND — the
+        # controlling station keyword wins because it's matched first.
+        c = parse("Hannover Ground, D-EIYD, request startup and taxi information")
+        assert c.station == "GND"
+
 
 class TestFormatStation:
     def test_ground(self):
