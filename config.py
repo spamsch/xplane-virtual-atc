@@ -131,6 +131,16 @@ OPENAI_PILOT_POOL = ["onyx", "echo", "alloy", "fable", "nova", "shimmer"]
 # built-in library (traffic/interactions/). This is the "customise it" hook.
 AMBIENT_LIBRARY_DIR = os.environ.get("AMBIENT_LIBRARY_DIR", "")
 
+# ── Airspace awareness (OpenAIP) ─────────────────────────────────────────────
+# X-Plane doesn't expose controlled airspace, so we load it from OpenAIP's free
+# per-country export (CC BY-NC 4.0, https://www.openaip.net/). When enabled, the
+# controller knows the real control zone you're in (e.g. "Hannover CTR, Class D,
+# SFC-2500 ft") and the handover logic uses real CTR boundaries instead of a
+# distance guess. The relevant country file (~3 MB) is downloaded once and
+# cached; with no network it falls back to the distance proxy. Set to false to
+# stay fully offline / skip the download.
+AIRSPACE_ENABLED = os.environ.get("AIRSPACE_ENABLED", "true").lower() in ("1", "true", "yes")
+
 # STT — faster-whisper model name or HuggingFace CTranslate2 model ID.
 # Only used when offline STT is opted into (STT_BACKEND=local); 'auto' never
 # selects local, so this model is not downloaded unless you ask for it.

@@ -272,7 +272,8 @@ class ATCSession:
                 lon: Optional[float] = None,
                 on_ground: Optional[bool] = None,
                 altitude_ft: Optional[float] = None,
-                gs_kts: Optional[float] = None) -> ATCResponse:
+                gs_kts: Optional[float] = None,
+                airspace: Optional[str] = None) -> ATCResponse:
         """Generate the ATC reply to a pilot transmission.
 
         com1_mhz: the aircraft's live COM1 frequency, if known. When provided,
@@ -355,7 +356,7 @@ class ATCSession:
             model=model,
             extra_instructions='\n'.join(extra_parts) if extra_parts else None,
             destination=self.destination,
-            flight_status=self._flight_status(on_ground, altitude_ft, gs_kts, lat, lon),
+            flight_status=self._flight_status(on_ground, altitude_ft, gs_kts, lat, lon, airspace),
         )
 
         self._stations_seen.add(self.current_station)
@@ -490,12 +491,13 @@ class ATCSession:
                        altitude_ft: Optional[float],
                        gs_kts: Optional[float],
                        lat: Optional[float],
-                       lon: Optional[float]) -> Optional[str]:
+                       lon: Optional[float],
+                       airspace: Optional[str] = None) -> Optional[str]:
         """A compact, human-readable summary of where the aircraft actually is,
         for the controller's situational awareness. Returns None when we know
         nothing live (CLI / tests) so the prompt is unchanged there."""
         phase = self.phase.value.replace('_', ' ')
-        if on_ground is None and altitude_ft is None and lat is None:
+        if on_ground is None and altitude_ft is None and lat is None and not airspace:
             return None
 
         parts: list[str] = []
@@ -520,6 +522,8 @@ class ATCSession:
             if nm >= 0.6:
                 parts.append(f"{nm:.0f} NM {_compass(brg)} of {self.current_airport.icao}")
 
+        if airspace:
+            parts.append(airspace)
         parts.append(f"phase {phase}")
         return ", ".join(parts)
 

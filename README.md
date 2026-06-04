@@ -71,6 +71,7 @@ Prefer to run from source, or on another platform? Same requirements as [What yo
 - **Push-to-talk that feels right.** Key the mic from the UI, the spacebar, or a bound X-Plane control. You get a mechanical relay *clack* on key and a squelch-tail hiss on unkey, synthesized in the browser.
 - **Voice in and out.** Optional speech-to-text (ElevenLabs Scribe, OpenAI, or a local ATC-fine-tuned Whisper model) and text-to-speech (ElevenLabs, OpenAI, Piper, or macOS `say`). Before synthesis the text is normalized to spoken radio form (`D-EIYD` → "Delta Echo India Yankee Delta", `27R` → "two seven Right"), then a radio-DSP pass band-limits the voice and adds VHF hiss. Pick the controller's voice by name from a curated list (or any ElevenLabs id).
 - **A frequency that isn't dead air.** With X-Plane connected, other aircraft work the same controller in the background — startup and taxi on Ground, the circuit and clearances on Tower, inbound calls on Approach, flight-information chatter en route. The traffic matches the frequency you're tuned to (no Tower calls on Ground), fits the airport's size, and runs on a single half-duplex channel so nothing keys over your reply. It goes silent the instant you press to talk — and afterwards the controller sometimes works one other aircraft before turning back to you. Each aircraft gets its own voice (drawn from a pool of ten) and its own radio character. Density is off / light / medium / heavy; the scripts are JSON you can edit or add to. VFR only for now.
+- **Knows the airspace you're in.** X-Plane doesn't expose controlled airspace, so the controller pulls it from [OpenAIP](https://www.openaip.net/): it knows you're in the *Hannover CTR, Class D, surface to 2500 ft*, reflects that in what it says, and won't hand you off to a neighbouring field while you're still inside the zone or haven't been released. The country file downloads once (~3 MB) and is cached; offline it falls back to a distance estimate.
 - **Knows when the sim is there.** The status bar shows a live X-Plane link indicator (LINKED / NO LINK), and PTT only listens while the sim is actually connected.
 
 ## How it works
@@ -146,7 +147,7 @@ The suite is fully mocked — no X-Plane and no live Claude needed.
 
 ```bash
 pip install -r requirements-dev.txt
-pytest tests/                                # 435 tests
+pytest tests/                                # 500 tests
 pytest tests/test_session.py -v              # one file
 pytest tests/ -k squawk                      # by name
 ```
@@ -176,6 +177,7 @@ The easiest path is the in-app **Settings view** (gear icon, top-right) — it s
 | `AMBIENT_TRAFFIC_RULES` | `VFR` | Flight rules the traffic flies — `VFR`, or `VFR,IFR` to mix in airliners |
 | `AMBIENT_PILOT_VOICES` | *(empty)* | Override the other-pilots voice pool; empty = backend default (10 voices on ElevenLabs) |
 | `AMBIENT_LIBRARY_DIR` | *(empty)* | Extra interaction `*.json` files, merged over the built-in library |
+| `AIRSPACE_ENABLED` | `true` | Load OpenAIP airspace (real CTR awareness); `false` = offline, distance estimate |
 
 ### Speech providers
 
@@ -210,10 +212,11 @@ xplane/       REST connector, UDP connector, scenario simulator
 airport/      apt.dat parser + spatial database
 aircraft/     aircraft type lookup
 audio/        STT, TTS, and radio DSP
+airspace/     OpenAIP airspace loader + point-in-polygon (CTR awareness)
 traffic/      ambient party-line library + pacing (interactions/*.json)
 scenarios/    JSON scenarios for the simulator data source
 ui/           Tauri 2 + SvelteKit 5 desktop app
-tests/        435 mocked tests
+tests/        500 mocked tests
 ```
 
 ## License
@@ -221,3 +224,7 @@ tests/        435 mocked tests
 [MIT](LICENSE) © 2026 Simon Pamies.
 
 Not affiliated with Laminar Research or X-Plane.
+
+Airspace data © [OpenAIP](https://www.openaip.net/) contributors, used under
+[CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/). Downloaded at
+runtime when airspace awareness is enabled; not redistributed with this repo.

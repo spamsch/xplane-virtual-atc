@@ -71,6 +71,8 @@ from traffic.library import (
     RenderContext, InteractionLibrary,
 )
 from traffic.ambient import AmbientPlanner
+from airspace.database import AirspaceDB, Airspace
+from airspace import openaip as airspace_openaip
 from xplane.connector import FlightState
 from xplane.rest_connector import XPlaneRestConnector, encode_fixed_string
 from xplane.ptt_listener import PTTListener
@@ -164,6 +166,11 @@ _ambient_size: Optional[str] = None      # current airport size (small|medium|la
 _ambient_rng = random.Random()           # selection + callsign variety
 _channel_lock: Optional[asyncio.Lock] = None   # half-duplex radio: one TX at a time
 _user_speaking: bool = False             # pilot is keying the mic → no traffic
+
+# ── Airspace (OpenAIP) ───────────────────────────────────────────────────────
+_airspace_db: Optional[AirspaceDB] = None    # airspace for the current country
+_airspace_country: Optional[str] = None      # ISO code currently loaded
+_airspace_loading: bool = False              # a load is in flight
 
 MAX_AUDIO_BYTES = 2 * 1024 * 1024   # 2 MB ≈ 62 s at 16 kHz 16-bit mono
 ACF_TAILNUM_BYTES = 40              # sim/aircraft/view/acf_tailnum is char[40]
@@ -679,6 +686,7 @@ async def _process_transmission_locked(text: str):
         # source) lets the session compute a real taxi route on the ground, and
         # the on-ground/altitude/groundspeed give the controller phase awareness.
         com1 = lat = lon = on_ground = altitude_ft = gs_kts = None
+        airspace_note = None
         if _driver is not None:
             st = _driver.state
             if st.is_flight_loaded:
@@ -688,10 +696,12 @@ async def _process_transmission_locked(text: str):
                 gs_kts = st.gs_kts
                 if _source == "xplane":
                     com1 = st.com1_mhz
+                    airspace_note = _airspace_note(st)
 
         # session.process() is blocking (calls claude subprocess)
         r = await asyncio.to_thread(
-            _session.process, text, com1, lat, lon, on_ground, altitude_ft, gs_kts)
+            _session.process, text, com1, lat, lon, on_ground, altitude_ft, gs_kts,
+            airspace_note)
 
         # Pilot called a station they haven't tuned to — no reply, just a nudge.
         if r.on_wrong_frequency:
@@ -1024,6 +1034,8 @@ async def _set_airport_inner(airport: Airport, scenario: Optional[Scenario] = No
     _current_airport = airport
     _ambient_size = classify_size(airport)
     log.info(f"Ambient: {airport.icao} classified as a {_ambient_size} field")
+    # Load this country's airspace in the background (cached after first run).
+    asyncio.create_task(_ensure_airspace(airport.icao))
     await _broadcast("airport_detected", **_airport_dict(airport))
 
     # Build per-airport conditions dict for ATCSession
@@ -1196,6 +1208,58 @@ def _com1_matches_airport(airport: Airport, com1_mhz: float) -> bool:
     return any(abs(f.freq_mhz - com1_mhz) <= 0.02 for f in airport.frequencies)
 
 
+async def _ensure_airspace(icao: str):
+    """Load the OpenAIP airspace for the airport's country in the background.
+    No-ops when disabled, already loaded for this country, or already loading."""
+    global _airspace_db, _airspace_country, _airspace_loading
+    if not config.AIRSPACE_ENABLED:
+        return
+    cc = airspace_openaip.country_for_icao(icao)
+    if cc is None or cc == _airspace_country or _airspace_loading:
+        return
+    _airspace_loading = True
+    try:
+        db = await asyncio.to_thread(airspace_openaip.load_country, cc)
+        _airspace_db = db
+        _airspace_country = cc if db is not None else None
+        if db is not None:
+            log.info(f"Airspace ready for {cc.upper()}: {len(db)} volumes")
+    except Exception as e:
+        log.warning(f"Airspace load failed for {cc}: {e}")
+    finally:
+        _airspace_loading = False
+
+
+def _current_ctr(state: FlightState):
+    """The CTR the aircraft is currently in, or None (airspace data permitting)."""
+    if _airspace_db is None:
+        return None
+    try:
+        return _airspace_db.in_ctr(state.lat, state.lon, state.alt_ind_ft)
+    except Exception:
+        return None
+
+
+def _airspace_note(state: FlightState) -> Optional[str]:
+    """A short note on the controlling airspace at the aircraft, for the
+    controller's situational text — e.g. 'in CTR HANNOVER (Class D, SFC-2500 ft)'."""
+    if _airspace_db is None:
+        return None
+    try:
+        a = _airspace_db.controlling(state.lat, state.lon, state.alt_ind_ft)
+    except Exception:
+        return None
+    return f"in {a.describe()}" if a is not None else None
+
+
+def _ctr_belongs_to(ctr, airport: Airport) -> bool:
+    """Does this CTR belong to the given airport? Matched by city name."""
+    if ctr is None or airport is None:
+        return False
+    city = airport.name.split()[0].upper()
+    return city in ctr.name.upper()
+
+
 def _should_adopt_airport(new_airport: Airport, state: FlightState) -> bool:
     """Decide whether to hand the session over to a newly-nearest airport.
 
@@ -1205,8 +1269,10 @@ def _should_adopt_airport(new_airport: Airport, state: FlightState) -> bool:
 
       - On the ground at the new field → adopt (you taxied in / landed there).
       - Explicitly tuned to the new field's frequency → adopt (clear intent).
+      - Inside the NEW field's CTR (real OpenAIP boundary) → adopt (arriving).
       - Otherwise, while airborne, do NOT hand over if any of these hold:
-          * still inside the current field's control zone (distance proxy), or
+          * still inside the current field's control zone — real CTR boundary
+            when airspace data is available, else a distance proxy, or
           * still tuned to one of the current field's frequencies, or
           * the controller hasn't cleared a frequency change / CTR exit yet.
     """
@@ -1218,12 +1284,25 @@ def _should_adopt_airport(new_airport: Airport, state: FlightState) -> bool:
     if _source == "xplane" and _com1_matches_airport(new_airport, state.com1_mhz):
         return True   # pilot has dialled the new field in — honour it
 
-    try:
-        nm, _ = _dist_bearing_nm(cur.lat, cur.lon, state.lat, state.lon)
-    except Exception:
-        nm = _CTR_RADIUS_NM + 1
-    if nm <= _CTR_RADIUS_NM:
-        return False  # still inside the control zone
+    if _airspace_db is not None:
+        # Real airspace boundaries.
+        ctr = _current_ctr(state)
+        if ctr is not None:
+            # Inside the new field's zone → adopt (arriving). Inside any other
+            # zone (current field's or a third one) → stay; you're still in
+            # controlled airspace and shouldn't be yanked off it.
+            return _ctr_belongs_to(ctr, new_airport)
+        # Outside all CTRs → you've genuinely left; fall through to the freq /
+        # release checks below.
+    else:
+        # No airspace data — approximate the control zone by distance.
+        try:
+            nm, _ = _dist_bearing_nm(cur.lat, cur.lon, state.lat, state.lon)
+        except Exception:
+            nm = _CTR_RADIUS_NM + 1
+        if nm <= _CTR_RADIUS_NM:
+            return False
+
     if _source == "xplane" and _com1_matches_airport(cur, state.com1_mhz):
         return False  # still working the current station's frequency
     if _session is not None and not _session.freq_change_cleared:
