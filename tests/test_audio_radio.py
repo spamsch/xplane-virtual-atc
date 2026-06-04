@@ -15,6 +15,8 @@ from audio.radio import (
     BANDPASS_LOW_HZ,
     BANDPASS_HIGH_HZ,
     NOISE_DB,
+    DEFAULT_PROFILE,
+    RadioProfile,
     apply_radio_fx,
     decode_wav,
     encode_wav,
@@ -85,6 +87,34 @@ class TestApplyRadioFx:
             out = apply_radio_fx(sig, sr)
             assert len(out) == len(sig)
             assert out.dtype == np.float32
+
+
+class TestCrackle:
+
+    def test_default_profile_has_no_crackle(self):
+        assert DEFAULT_PROFILE.crackle == 0.0
+
+    def test_crackle_changes_the_signal(self):
+        # Same voice, same hiss seed — only crackle differs → output must differ.
+        sig = _sine(1_000, amp=0.5)
+        clean = RadioProfile(crackle=0.0)
+        fried = RadioProfile(crackle=0.5)
+        a = apply_radio_fx(sig, SR, profile=clean, rng=np.random.default_rng(7))
+        b = apply_radio_fx(sig, SR, profile=fried, rng=np.random.default_rng(7))
+        assert not np.array_equal(a, b)
+
+    def test_crackle_stays_within_unity(self):
+        sig = (np.random.randn(SR) * 3).astype(np.float32)
+        out = apply_radio_fx(sig, SR, profile=RadioProfile(crackle=1.0),
+                             rng=np.random.default_rng(1))
+        assert np.max(np.abs(out)) <= 1.0
+
+    def test_crackle_is_reproducible_when_seeded(self):
+        sig = _sine(1_000, amp=0.5)
+        p = RadioProfile(crackle=0.6)
+        a = apply_radio_fx(sig, SR, profile=p, rng=np.random.default_rng(42))
+        b = apply_radio_fx(sig, SR, profile=p, rng=np.random.default_rng(42))
+        np.testing.assert_array_equal(a, b)
 
 
 # ─────────────────────────────── encode_wav ──────────────────────────────────
