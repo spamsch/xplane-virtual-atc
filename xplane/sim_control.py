@@ -2,9 +2,10 @@
 One-shot 'VFR day' weather setup via X-Plane's REST API.
 
 apply_vfr_day() downloads the real weather as of now, freezes it (so WIND,
-PRESSURE and TEMPERATURE stay real), then overrides only three things:
+PRESSURE and TEMPERATURE stay real), then overrides only a few things:
   - a few scattered low cumulus,
   - visibility at least `min_vis_sm`,
+  - rain off,
   - the clock at local noon.
 
 It deliberately never writes wind/pressure/temperature — freezing real weather
@@ -29,6 +30,7 @@ _NAMES = {
     'cbase': 'sim/weather/region/cloud_base_msl_m',
     'ctops': 'sim/weather/region/cloud_tops_msl_m',
     'vis':   'sim/weather/region/visibility_reported_sm',
+    'rain':  'sim/weather/region/rain_percent',
     'zulu':  'sim/time/zulu_time_sec',
     'local': 'sim/time/local_time_sec',
 }
@@ -93,6 +95,8 @@ def apply_vfr_day(host, port, *, scattered=0.30, min_vis_sm=5.0,
     if vis is None or vis <= min_vis_sm:
         vis = max(min_vis_sm + 1.0, 6.0)
         _patch(base, ids['vis'], float(vis))
+    # 4b) No rain — freezing static weather keeps whatever precip was real.
+    _patch(base, ids['rain'], 0.0)
     # 5) Local noon — derive zulu from the live local↔zulu offset.
     local = _get(base, ids['local'])
     zulu = _get(base, ids['zulu'])
@@ -104,6 +108,7 @@ def apply_vfr_day(host, port, *, scattered=0.30, min_vis_sm=5.0,
     return {
         'clouds': 'scattered cumulus',
         'visibility_sm': round(float(vis), 1) if vis is not None else None,
+        'rain': 'off',
         'time': 'local noon',
         'preserved': 'wind, pressure, temperature (real)',
     }

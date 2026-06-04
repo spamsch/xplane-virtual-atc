@@ -19,6 +19,7 @@ def store(monkeypatch):
         'sim/weather/region/cloud_base_msl_m': [300.0, 0.0, 0.0],
         'sim/weather/region/cloud_tops_msl_m': [900.0, 0.0, 0.0],
         'sim/weather/region/visibility_reported_sm': 3.0,   # below the 5 sm floor
+        'sim/weather/region/rain_percent': 0.8,             # raining — VFR must clear it
         'sim/time/zulu_time_sec': 54000.0,
         'sim/time/local_time_sec': 61200.0,
         # These must be left untouched (proves wind/pressure/temp are preserved):
@@ -44,6 +45,7 @@ def test_applies_vfr_day(store):
     assert store['sim/weather/region/visibility_reported_sm'] > 5              # floored above 5 sm
     # local noon: local was zulu+7200, so zulu must become 43200-7200 = 36000.
     assert store['sim/time/zulu_time_sec'] == 36000.0
+    assert store['sim/weather/region/rain_percent'] == 0.0                     # rain cleared
     assert res['time'] == 'local noon'
 
 

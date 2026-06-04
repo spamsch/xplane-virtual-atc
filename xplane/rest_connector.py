@@ -62,17 +62,14 @@ _DATAREFS: dict[str, str] = {
     'sim/cockpit/radios/transponder_code':         'transponder',
     'sim/aircraft/view/acf_ICAO':                  '_acf_icao_str',
     'sim/aircraft/view/acf_tailnum':               '_tail_str',
-    # Weather
+    # Weather — scalar floats in X-Plane 12 (these were arrays in XP11).
     'sim/weather/barometer_sealevel_inhg':         'qnh_inhg',
-    'sim/weather/wind_speed_kt':                   'wind_speed_kts',   # array[0]
-    'sim/weather/wind_direction_degt':             'wind_dir_deg',     # array[0]
+    'sim/weather/wind_speed_kt':                   'wind_speed_kts',
+    'sim/weather/wind_direction_degt':             'wind_dir_deg',
 }
 
 # Array datarefs that need ?index=N when fetching the value
-_ARRAY_IDX: dict[str, int] = {
-    'sim/weather/wind_speed_kt':       0,
-    'sim/weather/wind_direction_degt': 0,
-}
+_ARRAY_IDX: dict[str, int] = {}
 
 
 def _http_get(url: str, timeout: float = 2.0) -> dict:
