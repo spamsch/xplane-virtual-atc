@@ -17,7 +17,7 @@
       "station": "ground",
       "flight_rules": "VFR",
       "sizes": ["small", "medium", "large"],
-      "weight": 1.4,
+      "weight": 1.0,
       "lines": [
         { "speaker": "pilot", "text": "{atc_callsign}, {callsign}, request startup, VFR departure." },
         { "speaker": "atc",   "text": "{callsign}, startup approved, QNH {qnh}, report ready to taxi." },
@@ -64,10 +64,92 @@
       "station": "ground",
       "flight_rules": "VFR",
       "sizes": ["medium", "large"],
-      "weight": 0.7,
+      "weight": 1.0,
       "lines": [
         { "speaker": "pilot", "text": "{atc_callsign}, {callsign}, runway vacated, request taxi to general aviation parking." },
         { "speaker": "atc",   "text": "{callsign}, taxi to general aviation, welcome to {airport}." }
+      ]
+    },
+    {
+      "id": "gnd_landed_taxi_in",
+      "station": "ground",
+      "flight_rules": "VFR",
+      "sizes": ["small", "medium", "large"],
+      "weight": 1.3,
+      "lines": [
+        { "speaker": "pilot", "text": "{atc_callsign}, {callsign}, runway {runway} vacated, request taxi to parking." },
+        { "speaker": "atc",   "text": "{callsign}, taxi to general aviation, QNH {qnh}." },
+        { "speaker": "pilot", "text": "Taxi to general aviation, {callsign}." }
+      ]
+    },
+    {
+      "id": "gnd_vacate_report",
+      "station": "ground",
+      "flight_rules": "VFR",
+      "sizes": ["medium", "large"],
+      "weight": 1.1,
+      "lines": [
+        { "speaker": "pilot", "text": "{atc_callsign}, {callsign}, runway {runway} vacated." },
+        { "speaker": "atc",   "text": "{callsign}, roger, taxi to the apron, welcome to {airport}." },
+        { "speaker": "pilot", "text": "Taxi to the apron, {callsign}." }
+      ]
+    },
+    {
+      "id": "gnd_taxi_to_stand",
+      "station": "ground",
+      "flight_rules": "VFR",
+      "sizes": ["large"],
+      "weight": 1.0,
+      "lines": [
+        { "speaker": "pilot", "text": "{atc_callsign}, {callsign}, vacated, request taxi to the stand." },
+        { "speaker": "atc",   "text": "{callsign}, taxi to the general aviation apron, follow the marshaller." },
+        { "speaker": "pilot", "text": "To the apron, follow the marshaller, {callsign}." }
+      ]
+    },
+    {
+      "id": "gnd_taxi_to_club",
+      "station": "ground",
+      "flight_rules": "VFR",
+      "sizes": ["small", "medium"],
+      "weight": 1.1,
+      "lines": [
+        { "speaker": "pilot", "text": "{atc_callsign}, {callsign}, runway vacated, request taxi to the flying club." },
+        { "speaker": "atc",   "text": "{callsign}, taxi to the club apron, {airport}." }
+      ]
+    },
+    {
+      "id": "gnd_taxi_in_after_circuits",
+      "station": "ground",
+      "flight_rules": "VFR",
+      "sizes": ["small", "medium"],
+      "weight": 0.9,
+      "lines": [
+        { "speaker": "pilot", "text": "{atc_callsign}, {callsign}, full stop, runway vacated, taxi to parking." },
+        { "speaker": "atc",   "text": "{callsign}, taxi to general aviation, QNH {qnh}." }
+      ]
+    },
+    {
+      "id": "gnd_taxi_maintenance",
+      "station": "ground",
+      "flight_rules": "VFR",
+      "sizes": ["medium", "large"],
+      "weight": 0.6,
+      "lines": [
+        { "speaker": "pilot", "text": "{atc_callsign}, {callsign}, vacated, request taxi to the maintenance hangar." },
+        { "speaker": "atc",   "text": "{callsign}, taxi to the maintenance area, report shutdown." },
+        { "speaker": "pilot", "text": "Taxi to maintenance, {callsign}." }
+      ]
+    },
+    {
+      "id": "gnd_parking_full",
+      "station": "ground",
+      "flight_rules": "VFR",
+      "sizes": ["medium", "large"],
+      "weight": 0.5,
+      "lines": [
+        { "speaker": "pilot", "text": "{atc_callsign}, {callsign}, vacated, request parking." },
+        { "speaker": "atc",   "text": "{callsign}, general aviation is full, taxi to the overflow apron." },
+        { "speaker": "pilot", "text": "Overflow apron, {callsign}." }
       ]
     },
     {
