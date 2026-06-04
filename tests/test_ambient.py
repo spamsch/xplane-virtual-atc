@@ -77,6 +77,23 @@ class TestPlanner:
         for _ in range(100):
             assert 0.4 <= p.inter_line_gap() <= 1.7
 
+    def test_atmosphere_off_when_disabled(self):
+        p = AmbientPlanner("off", rng=random.Random(1))
+        assert not any(p.should_emit_atmosphere(1.0) for _ in range(200))
+
+    def test_atmosphere_rate_tracks_level(self):
+        # Heavy (12/min) fires more often per tick than light (2/min).
+        light = sum(AmbientPlanner("light", rng=random.Random(i)).should_emit_atmosphere(1.0)
+                    for i in range(2000))
+        heavy = sum(AmbientPlanner("heavy", rng=random.Random(i)).should_emit_atmosphere(1.0)
+                    for i in range(2000))
+        assert heavy > light
+
+    def test_pick_atmosphere_is_valid_kind(self):
+        p = AmbientPlanner("heavy", rng=random.Random(3))
+        kinds = {p.pick_atmosphere() for _ in range(200)}
+        assert kinds and kinds <= {"squelch", "static", "chatter"}
+
 
 # ─────────────────────────── audio variation ─────────────────────────────────
 
@@ -119,6 +136,44 @@ class TestRadioVariation:
         assert len(down) > len(sig)
         same = pitch_shift(sig, 0.0)
         np.testing.assert_array_equal(same, sig)
+
+
+class TestBackgroundAtmosphere:
+    def test_each_kind_is_bounded_audio(self):
+        from audio.radio import background_event, BACKGROUND_KINDS, BACKGROUND_SR
+        for kind in BACKGROUND_KINDS:
+            out = background_event(kind, rng=np.random.default_rng(1))
+            assert out.dtype == np.float32
+            assert out.ndim == 1 and len(out) > 0
+            assert np.max(np.abs(out)) <= 1.0
+
+    def test_kinds_have_plausible_durations(self):
+        from audio.radio import background_event, BACKGROUND_SR
+        # squelch is the shortest, chatter the longest.
+        sq = len(background_event("squelch", rng=np.random.default_rng(2)))
+        ch = len(background_event("chatter", rng=np.random.default_rng(2)))
+        assert sq < ch
+        assert sq / BACKGROUND_SR < 0.4
+
+    def test_seeded_event_reproducible(self):
+        from audio.radio import background_event
+        a = background_event("static", rng=np.random.default_rng(7))
+        b = background_event("static", rng=np.random.default_rng(7))
+        np.testing.assert_array_equal(a, b)
+
+    def test_unknown_kind_is_safe(self):
+        from audio.radio import background_event
+        out = background_event("nope", rng=np.random.default_rng(1))
+        assert out.dtype == np.float32 and len(out) > 0
+
+    def test_atmosphere_sits_below_a_transmission(self):
+        # Background should be quieter than a normal radio transmission so it
+        # genuinely sits *under* the traffic.
+        from audio.radio import background_event, apply_radio_fx
+        bg = background_event("chatter", rng=np.random.default_rng(3))
+        tx = apply_radio_fx((0.4 * np.sin(2 * np.pi * 1000 *
+                            np.arange(16000) / 16000)).astype(np.float32), 16000)
+        assert float(np.sqrt(np.mean(bg ** 2))) < float(np.sqrt(np.mean(tx ** 2)))
 
 
 # ─────────────────────────── airline telephony ───────────────────────────────

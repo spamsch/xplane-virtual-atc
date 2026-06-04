@@ -256,6 +256,11 @@ function dispatch(msg) {
       }]);
       break;
 
+    case 'ambient_noise':
+      // Background radio atmosphere — play it, no chat bubble.
+      _playAmbientAudio(msg.audio);
+      break;
+
     case 'ambient_stop':
       stopAmbientAudio();
       break;

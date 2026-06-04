@@ -14,6 +14,8 @@ Server → client event types:
   atc_audio        audio (base64 WAV), text, model, timestamp  [if AUDIO_ENABLED]
   ambient_audio    audio (base64 WAV), speaker ("pilot"|"atc"), text, callsign,
                    kind ("ambient"|"interjection")             [ambient party-line traffic]
+  ambient_noise    audio (base64 WAV), kind ("squelch"|"static"|"chatter")
+                   — background radio atmosphere between transmissions (no text)
   ambient_stop     (no payload) — cut any in-flight ambient audio now (you keyed up)
   transcription    text                                        [if AUDIO_ENABLED]
   ptt_start        (no payload) — X-Plane PTT button pressed  [if XPLANE_PTT_DATAREF set]
@@ -439,6 +441,23 @@ async def _play_rendered(rendered, *, kind: str) -> bool:
     return True
 
 
+async def _play_background(kind: str):
+    """Play one short background-radio clip (squelch break / static / distant
+    chatter) on the channel — no text, no bubble. Fills the quiet so the
+    frequency sounds open and busy between transmissions."""
+    if not _AUDIO_READY:
+        return
+    try:
+        samples = await asyncio.to_thread(_audio_radio.background_event, kind)
+    except Exception as e:
+        log.debug(f"Background atmosphere synth failed ({kind}): {e}")
+        return
+    if _user_speaking:
+        return
+    await _play_on_channel(samples, _audio_radio.BACKGROUND_SR,
+                           event="ambient_noise", kind=kind)
+
+
 async def _maybe_interject():
     """After the pilot transmits, sometimes work one other aircraft before
     turning back to them. Called inside the transmission lock, before the real
@@ -480,6 +499,9 @@ async def _ambient_loop():
             await asyncio.sleep(1.0)
             if not _ambient_active():
                 break
+            # Sprinkle background atmosphere through the quiet so it isn't dead air.
+            if _ambient_planner.should_emit_atmosphere(1.0):
+                await _play_background(_ambient_planner.pick_atmosphere())
         if not _ambient_active():
             continue
         plan = _ambient_plan()

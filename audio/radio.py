@@ -65,17 +65,18 @@ DEFAULT_PROFILE = RadioProfile()
 
 
 def random_profile(rng: np.random.Generator) -> RadioProfile:
-    """A plausibly-different radio: narrower/wider passband, more or less AM
-    drive, more hiss, a touch quieter, and its own dose of crackle. The ranges
-    are deliberately wide so two aircraft rarely sound alike. Seed the generator
-    off a callsign to keep a given aircraft consistent across its lines."""
+    """A plausibly-different radio. The ranges are deliberately *wide* so the
+    party line spans the full spread you'd really hear: the odd crisp, strong
+    local set through to weak, distant, badly-fried ones. Crackle can hit 0 (a
+    clean radio) or push hard (a struggling one). Seed the generator off a
+    callsign to keep a given aircraft consistent across its lines."""
     return RadioProfile(
-        low_hz=float(rng.uniform(240, 380)),
-        high_hz=float(rng.uniform(2500, 3500)),
-        drive=float(rng.uniform(2.6, 5.6)),
-        noise_db=float(rng.uniform(-40.0, -27.0)),
-        gain=float(rng.uniform(0.6, 0.95)),    # other traffic sits below your own controller
-        crackle=float(rng.uniform(0.12, 0.6)),
+        low_hz=float(rng.uniform(200, 480)),
+        high_hz=float(rng.uniform(2100, 3600)),
+        drive=float(rng.uniform(2.0, 7.5)),
+        noise_db=float(rng.uniform(-45.0, -20.0)),
+        gain=float(rng.uniform(0.4, 1.0)),     # from quite distant up to right next to you
+        crackle=float(rng.uniform(0.0, 0.95)),
     )
 
 
@@ -201,6 +202,73 @@ def pitch_shift(samples: np.ndarray, semitones: float) -> np.ndarray:
     n_out = max(1, int(round(len(samples) / factor)))
     src_idx = np.linspace(0.0, len(samples) - 1, n_out)
     return np.interp(src_idx, np.arange(len(samples)), samples).astype(np.float32)
+
+
+# ─────────────────────────── background atmosphere ───────────────────────────
+# Short non-speech clips that fill the gaps between transmissions so the
+# frequency sounds open and busy, not dead. All band-limited into the VHF voice
+# band and kept well below transmission level — they sit *under* the traffic.
+
+BACKGROUND_KINDS = ("squelch", "static", "chatter")
+BACKGROUND_SR = 16_000
+
+
+def _band_noise(n: int, sr: int, gen: np.random.Generator,
+                low: float = BANDPASS_LOW_HZ, high: float = BANDPASS_HIGH_HZ) -> np.ndarray:
+    """n samples of Gaussian noise band-limited to the radio voice band."""
+    sos = _bandpass_sos_edges(sr, low, high, BANDPASS_ORDER)
+    return sosfilt(sos, gen.standard_normal(n)).astype(np.float32)
+
+
+def background_event(kind: str, *, sr: int = BACKGROUND_SR,
+                     rng: np.random.Generator | None = None) -> np.ndarray:
+    """Synthesize one short background-radio clip (float32 mono, ±1):
+
+      squelch — someone keys and unkeys without speaking: click, a breath of
+                open carrier hiss, click. The single most common 'busy freq' cue.
+      static  — a burst of crackly band noise, a distant set breaking up.
+      chatter — faint, unintelligible distant speech, faked by amplitude-
+                modulating band noise at a syllable rate. You can tell someone's
+                talking, you just can't make it out.
+
+    Levels are deliberately low (these play under the traffic). Seed `rng` for
+    reproducibility. Unknown kind → a short near-silence."""
+    gen = rng if rng is not None else np.random.default_rng()
+
+    if kind == "squelch":
+        dur = float(gen.uniform(0.10, 0.28))
+        n = max(1, int(dur * sr))
+        bed = _band_noise(n, sr, gen) * (10.0 ** (-26.0 / 20.0))
+        click = _band_noise(max(1, int(0.012 * sr)), sr, gen) * 0.5   # key/unkey pop
+        out = bed.copy()
+        out[:len(click)] += click
+        out[-len(click):] += click[::-1]
+        return np.clip(out, -1.0, 1.0)
+
+    if kind == "static":
+        dur = float(gen.uniform(0.3, 0.9))
+        n = max(1, int(dur * sr))
+        sos = _bandpass_sos_edges(sr, BANDPASS_LOW_HZ, BANDPASS_HIGH_HZ, BANDPASS_ORDER)
+        out = _band_noise(n, sr, gen) * (10.0 ** (gen.uniform(-26.0, -16.0) / 20.0))
+        out = _apply_crackle(out, sr, sos, float(gen.uniform(0.6, 1.0)), gen)
+        return np.clip(out, -1.0, 1.0)
+
+    if kind == "chatter":
+        dur = float(gen.uniform(0.8, 2.4))
+        n = max(1, int(dur * sr))
+        t = np.arange(n) / sr
+        low, high = 480.0, 2600.0
+        # syllable-rate envelope, gated into bursts so it reads as speech rhythm
+        syl_hz = float(gen.uniform(2.5, 5.5))
+        env = 0.5 + 0.5 * np.sin(2 * np.pi * syl_hz * t + gen.uniform(0, 6.28))
+        env = np.clip(env - gen.uniform(0.15, 0.4), 0.0, None)
+        carrier = _band_noise(n, sr, gen, low=low, high=high)
+        out = (carrier * env).astype(np.float32) * (10.0 ** (gen.uniform(-28.0, -19.0) / 20.0))
+        sos = _bandpass_sos_edges(sr, low, high, BANDPASS_ORDER)
+        out = _apply_crackle(out, sr, sos, float(gen.uniform(0.3, 0.7)), gen)
+        return np.clip(out, -1.0, 1.0)
+
+    return np.zeros(max(1, int(0.1 * sr)), dtype=np.float32)
 
 
 def encode_wav(samples: np.ndarray, sr: int) -> bytes:
