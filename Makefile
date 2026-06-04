@@ -52,7 +52,8 @@ clean:
 # Cut a release. Bumps the patch level in all four version files, syncs
 # Cargo.lock, commits, tags vX.Y.Z, and pushes. Pushing the tag triggers
 # .github/workflows/release.yml, which builds the prepackaged macOS app and
-# publishes it to the GitHub Release.
+# publishes it to the GitHub Release — with a changelog generated from the
+# commit subjects since the previous tag.
 release:
 	@cur=$$(perl -ne 'print $$1 if /"version"\s*:\s*"([0-9]+\.[0-9]+\.[0-9]+)"/' ui/package.json); \
 	[ -n "$$cur" ] || { echo "Could not read current version from ui/package.json"; exit 1; }; \
