@@ -69,6 +69,119 @@
         { "speaker": "pilot", "text": "{atc_callsign}, {callsign}, runway vacated, request taxi to general aviation parking." },
         { "speaker": "atc",   "text": "{callsign}, taxi to general aviation, welcome to {airport}." }
       ]
+    },
+    {
+      "id": "gnd_request_information",
+      "station": "ground",
+      "flight_rules": "VFR",
+      "sizes": ["small", "medium", "large"],
+      "lines": [
+        { "speaker": "pilot", "text": "{atc_callsign}, {callsign}, request airfield information." },
+        { "speaker": "atc",   "text": "{callsign}, runway {runway} in use, wind {wind}, QNH {qnh}." },
+        { "speaker": "pilot", "text": "Runway {runway}, QNH {qnh}, {callsign}." }
+      ]
+    },
+    {
+      "id": "gnd_qnh_check",
+      "station": "ground",
+      "flight_rules": "VFR",
+      "sizes": ["small", "medium", "large"],
+      "weight": 0.5,
+      "lines": [
+        { "speaker": "pilot", "text": "{atc_callsign}, {callsign}, request QNH." },
+        { "speaker": "atc",   "text": "{callsign}, QNH {qnh}." }
+      ]
+    },
+    {
+      "id": "gnd_cross_runway",
+      "station": "ground",
+      "flight_rules": "VFR",
+      "sizes": ["medium", "large"],
+      "lines": [
+        { "speaker": "pilot", "text": "{atc_callsign}, {callsign}, holding short, request crossing runway {runway}." },
+        { "speaker": "atc",   "text": "{callsign}, cross runway {runway}, report vacated." },
+        { "speaker": "pilot", "text": "Cross runway {runway}, wilco, {callsign}." }
+      ]
+    },
+    {
+      "id": "gnd_taxi_give_way",
+      "station": "ground",
+      "flight_rules": "VFR",
+      "sizes": ["medium", "large"],
+      "lines": [
+        { "speaker": "pilot", "text": "{atc_callsign}, {callsign}, ready to taxi." },
+        { "speaker": "atc",   "text": "{callsign}, taxi to holding point runway {runway}, give way to traffic from your right, QNH {qnh}." },
+        { "speaker": "pilot", "text": "Holding point runway {runway}, giving way, QNH {qnh}, {callsign}." }
+      ]
+    },
+    {
+      "id": "gnd_hold_position",
+      "station": "ground",
+      "flight_rules": "VFR",
+      "sizes": ["medium", "large"],
+      "weight": 0.6,
+      "lines": [
+        { "speaker": "atc",   "text": "{callsign}, hold position, traffic crossing behind you." },
+        { "speaker": "pilot", "text": "Holding position, {callsign}." },
+        { "speaker": "atc",   "text": "{callsign}, continue taxi, holding point runway {runway}." }
+      ]
+    },
+    {
+      "id": "gnd_runup",
+      "station": "ground",
+      "flight_rules": "VFR",
+      "sizes": ["small", "medium"],
+      "lines": [
+        { "speaker": "pilot", "text": "{atc_callsign}, {callsign}, request engine run-up." },
+        { "speaker": "atc",   "text": "{callsign}, run-up approved at the holding point, report ready for departure." },
+        { "speaker": "pilot", "text": "Run-up at the holding point, wilco, {callsign}." }
+      ]
+    },
+    {
+      "id": "gnd_circuits_training",
+      "station": "ground",
+      "flight_rules": "VFR",
+      "sizes": ["small", "medium"],
+      "lines": [
+        { "speaker": "pilot", "text": "{atc_callsign}, {callsign}, request taxi for circuits." },
+        { "speaker": "atc",   "text": "{callsign}, taxi to holding point runway {runway}, QNH {qnh}, report ready." },
+        { "speaker": "pilot", "text": "Holding point runway {runway}, QNH {qnh}, {callsign}." }
+      ]
+    },
+    {
+      "id": "gnd_request_fuel",
+      "station": "ground",
+      "flight_rules": "VFR",
+      "sizes": ["small", "medium"],
+      "weight": 0.7,
+      "lines": [
+        { "speaker": "pilot", "text": "{atc_callsign}, {callsign}, request taxi to the fuel pumps." },
+        { "speaker": "atc",   "text": "{callsign}, taxi to the fuel station, report when ready to copy onward taxi." },
+        { "speaker": "pilot", "text": "Taxi to the fuel station, {callsign}." }
+      ]
+    },
+    {
+      "id": "gnd_vfr_departure_squawk",
+      "station": "ground",
+      "flight_rules": "VFR",
+      "sizes": ["medium", "large"],
+      "lines": [
+        { "speaker": "pilot", "text": "{atc_callsign}, {callsign}, request taxi, VFR departure to the north." },
+        { "speaker": "atc",   "text": "{callsign}, taxi to holding point runway {runway}, squawk 7000, QNH {qnh}." },
+        { "speaker": "pilot", "text": "Holding point runway {runway}, squawk 7000, QNH {qnh}, {callsign}." }
+      ]
+    },
+    {
+      "id": "gnd_startup_delay",
+      "station": "ground",
+      "flight_rules": "VFR",
+      "sizes": ["large"],
+      "weight": 0.7,
+      "lines": [
+        { "speaker": "pilot", "text": "{atc_callsign}, {callsign}, request startup." },
+        { "speaker": "atc",   "text": "{callsign}, startup approved, expect a short delay for departing traffic, QNH {qnh}." },
+        { "speaker": "pilot", "text": "Startup approved, QNH {qnh}, {callsign}." }
+      ]
     }
   ]
 }
