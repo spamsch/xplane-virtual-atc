@@ -39,11 +39,39 @@ def _apt_dat_paths(base: Path) -> list:
 APT_DAT_PATHS = _apt_dat_paths(XPLANE_BASE)
 
 
+def _nav_data_paths(base: Path) -> dict:
+    """Candidate earth_nav.dat / earth_fix.dat locations under an X-Plane install.
+    'Custom Data' (a user nav-data update, e.g. Navigraph) wins over the shipped
+    'Resources/default data' when present."""
+    return {
+        "nav": [
+            base / "Custom Data" / "earth_nav.dat",
+            base / "Resources" / "default data" / "earth_nav.dat",
+        ],
+        "fix": [
+            base / "Custom Data" / "earth_fix.dat",
+            base / "Resources" / "default data" / "earth_fix.dat",
+        ],
+    }
+
+
+NAV_DATA_PATHS = _nav_data_paths(XPLANE_BASE)
+
+
+def first_existing(paths: list):
+    """First path in the list that exists, or None."""
+    for p in paths:
+        if p.exists():
+            return p
+    return None
+
+
 def set_xplane_path(path: str) -> None:
-    """Point the airport lookup at a new X-Plane install (from the Settings view)."""
-    global XPLANE_BASE, APT_DAT_PATHS
+    """Point the airport + nav lookups at a new X-Plane install (from Settings)."""
+    global XPLANE_BASE, APT_DAT_PATHS, NAV_DATA_PATHS
     XPLANE_BASE = Path(path)
     APT_DAT_PATHS = _apt_dat_paths(XPLANE_BASE)
+    NAV_DATA_PATHS = _nav_data_paths(XPLANE_BASE)
 
 
 def set_env(key: str, value: str) -> None:

@@ -47,14 +47,98 @@ EXAMPLES = [
 ]
 
 
-def render() -> str:
-    """Render the examples as a prompt block."""
-    out = [
-        "Example exchanges — note WHAT the pilot says and respond ONLY to that. "
-        "Do not pre-empt requests:",
-    ]
-    for situation, pilot, atc in EXAMPLES:
+# FIS (Flight Information Service) — information, never control. The key lessons:
+# traffic info is advisory ("if observed"), there are no clearances, and the
+# service is terminated when the pilot reaches controlled airspace / destination.
+FIS_EXAMPLES = [
+    (
+        "Pilot checks in with type, position and altitude requesting a basic service",
+        "Bremen Information, D-EIYD, Cessna 172, 5 miles north of Osnabrück VOR, "
+        "2500 feet, VFR Bielefeld to Münster, request basic service.",
+        "D-EIYD, Bremen Information, basic service, squawk 7000, report reaching "
+        "any controlled airspace.",
+    ),
+    (
+        "Give traffic information as INFORMATION, not an instruction — qualify it",
+        "Bremen Information, D-EIYD, request traffic.",
+        "D-EIYD, traffic believed to be in your area, 2 o'clock, 4 miles, "
+        "crossing left to right, a light aircraft, altitude unknown.",
+    ),
+    (
+        "Pilot reports a position — acknowledge, never instruct",
+        "D-EIYD, overhead Osnabrück VOR, 2500 feet.",
+        "D-EIYD, roger.",
+    ),
+    (
+        "Nearing the destination's controlled airspace — terminate and hand off",
+        "D-EIYD, request frequency change to Münster.",
+        "D-EIYD, basic service terminated, squawk 7000, contact Münster Tower "
+        "129.805, good day.",
+    ),
+]
+
+# Uncontrolled aerodrome (AFIS / UNICOM self-announce). No clearances at all;
+# the operator passes aerodrome information and the pilot decides.
+UNCONTROLLED_EXAMPLES = [
+    (
+        "Pilot calls for departure information at an uncontrolled field — pass "
+        "info only, the take-off decision is the pilot's",
+        "Bielefeld Information, D-EIYD, Cessna 172 at the apron, request taxi "
+        "and departure information runway 25.",
+        "D-EIYD, Bielefeld Information, runway 25 in use, wind 250 degrees 6 "
+        "knots, QNH 1015, no reported traffic, taxi at your discretion.",
+    ),
+    (
+        "Pilot announces lining up — acknowledge, do NOT 'clear' them",
+        "D-EIYD, lining up runway 25 for departure.",
+        "D-EIYD, roger, no reported traffic.",
+    ),
+    (
+        "Inbound pilot reports — give the field info and known traffic, no landing clearance",
+        "Bielefeld Information, D-EIYD, 5 miles east, inbound for landing.",
+        "D-EIYD, roger, runway 25 in use, QNH 1015, one in the circuit, report final.",
+    ),
+]
+
+
+def _render(header: str, examples) -> str:
+    out = [header]
+    for situation, pilot, atc in examples:
         out.append(f"- {situation}:")
         out.append(f"    Pilot: {pilot}")
         out.append(f"    You:   {atc}")
     return "\n".join(out)
+
+
+def render() -> str:
+    """Render the control examples as a prompt block."""
+    return _render(
+        "Example exchanges — note WHAT the pilot says and respond ONLY to that. "
+        "Do not pre-empt requests:",
+        EXAMPLES,
+    )
+
+
+def render_fis() -> str:
+    return _render(
+        "Example FIS exchanges — you INFORM, you do not control. Never clear, "
+        "never instruct, always qualify traffic:",
+        FIS_EXAMPLES,
+    )
+
+
+def render_uncontrolled() -> str:
+    return _render(
+        "Example exchanges at an UNCONTROLLED aerodrome — pass information only; "
+        "the pilot decides and acts at their own discretion:",
+        UNCONTROLLED_EXAMPLES,
+    )
+
+
+def render_for(service_kind: str) -> str:
+    """Examples appropriate to the service: control | fis | uncontrolled."""
+    if service_kind == "fis":
+        return render_fis()
+    if service_kind == "uncontrolled":
+        return render_uncontrolled()
+    return render()

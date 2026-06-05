@@ -22,6 +22,11 @@ export const phase = writable('PRE_DEPARTURE');
 export const station = writable('GND');
 export const thinking = writable(false);
 
+// Flight plan (the staged journey)
+export const flightplan      = writable(null);   // {route, summary, total_nm, fis, waypoints[]} or null
+export const flightplanStage = writable(null);   // 'departure'|'enroute'|'arrival'|'arrival_ground'
+export const flightplanOpen  = writable(false);  // the route popup is open
+
 // UI
 export const scenarioDrawerOpen = writable(false);
 export const loading      = writable(false);   // backend is setting up a session (boundary check)

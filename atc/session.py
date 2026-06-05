@@ -49,6 +49,12 @@ class Station(Enum):
     DEP   = "departure"
     RADAR = "radar"
     FIS   = "fis"
+    CTAF  = "ctaf"   # uncontrolled aerodrome self-announce / AFIS — no ATC
+
+
+# Stations that issue no control clearances. The state machine treats these as
+# information-only: no squawk assignment, no taxi clearance injection.
+_INFO_STATIONS = (Station.FIS, Station.CTAF)
 
 
 # ------------------------------------------------------------------ #
@@ -182,14 +188,14 @@ _PARSER_TO_STATION: dict[str, Station] = {
     'CLD':   Station.GND,   # clearance delivery handled by Ground in this engine
     'FIS':   Station.FIS,   # "Information" — the flight information service
     'ATIS':  Station.FIS,   # recorded ATIS has no live station; treat a call as FIS
-    'CTAF':  Station.GND,
+    'CTAF':  Station.CTAF,  # UNICOM / self-announce at an uncontrolled aerodrome
 }
 
 # Apt.dat frequency type code → Station
 # Code 56 (Departure) maps to RADAR — in German airspace "Radar" is the Departure service
 _FREQ_TYPE_TO_STATION: dict[int, Station] = {
     50: Station.FIS,
-    51: Station.GND,
+    51: Station.CTAF,   # CTAF/Unicom — uncontrolled self-announce
     52: Station.GND,
     53: Station.GND,
     54: Station.TWR,
@@ -212,6 +218,7 @@ _STATION_LABELS: dict[Station, str] = {
     Station.DEP:   'Departure',
     Station.RADAR: 'Radar',
     Station.FIS:   'Information',
+    Station.CTAF:  'Information',   # AFIS field; pure UNICOM becomes 'Traffic' below
 }
 
 
@@ -232,20 +239,33 @@ class ATCSession:
                  destination: Optional[Airport],
                  aircraft: Optional[AircraftPerf],
                  callsign: str,
-                 conditions: dict):
+                 conditions: dict,
+                 flight_plan=None):
         """
         Args:
             conditions: {ICAO: {qnh, wind_dir, wind_kts, visibility_km, atis,
                                  active_runway}} — keyed by airport ICAO.
+            flight_plan: an optional flightplan.FlightPlan. When set, the session
+                stages a full journey: an uncontrolled departure self-announces on
+                CTAF/AFIS (no clearances), the en-route leg is worked by a named
+                FIS, and a controlled arrival runs Tower→Ground. Station context
+                is driven by position (the backend), not by the pilot's wording —
+                so "Information" doesn't yank an AFIS field over to en-route FIS.
         """
         self.departure       = departure
         self.destination     = destination
         self.aircraft        = aircraft
         self.callsign        = callsign
         self.conditions      = conditions
+        self.flight_plan     = flight_plan
 
         self.phase           = Phase.PRE_DEPARTURE
-        self.current_station = Station.GND
+        # An uncontrolled departure field starts on CTAF/AFIS, not Ground.
+        self.current_station = (
+            Station.CTAF
+            if flight_plan is not None and flight_plan.departure.controlled is False
+            else Station.GND
+        )
         self.current_airport = departure
 
         self.squawk: Optional[str] = None
@@ -296,6 +316,16 @@ class ATCSession:
 
         # Detect station switch from the pilot's own transmission
         pilot_station = _PARSER_TO_STATION.get(call.station or '')
+        # In flight-plan mode, while we're in an information context (an
+        # uncontrolled field's AFIS or the en-route FIS), the station is driven by
+        # position — the backend hands us to the next service. Ignore any
+        # voice-derived switch here: "Bielefeld Information" must not flip to
+        # en-route FIS, and "request departure information" must not be mistaken
+        # for a Departure/Radar handoff. Once at a controlled field, normal
+        # Ground↔Tower voice switching resumes.
+        if (self.flight_plan is not None
+                and self.current_station in _INFO_STATIONS):
+            pilot_station = None
         if pilot_station and pilot_station != self.current_station:
             # If this is a handed-off station and we know COM1, require the pilot
             # to be tuned to it before that station will respond.
@@ -357,6 +387,7 @@ class ATCSession:
             extra_instructions='\n'.join(extra_parts) if extra_parts else None,
             destination=self.destination,
             flight_status=self._flight_status(on_ground, altitude_ft, gs_kts, lat, lon, airspace),
+            service_kind=self._service_kind(),
         )
 
         self._stations_seen.add(self.current_station)
@@ -482,9 +513,57 @@ class ATCSession:
         return None
 
     def _atc_callsign(self) -> str:
+        # En-route FIS is a regional service, not the field's — name it from the
+        # flight plan (e.g. "Bremen Information").
+        if self.current_station == Station.FIS and self.flight_plan is not None:
+            return self.flight_plan.fis.callsign
         city = self.current_airport.name.split()[0]
+        if self.current_station == Station.CTAF:
+            # AFIS fields answer as "<field> Information"; a field with no
+            # frequency at all is pure UNICOM → "<field> Traffic".
+            label = 'Information' if self.current_airport.frequencies else 'Traffic'
+            return f"{city} {label}"
         label = _STATION_LABELS.get(self.current_station, 'Radio')
         return f"{city} {label}"
+
+    def _service_kind(self) -> str:
+        """Which authority the current station speaks with — selects the engine's
+        role + phraseology. FIS informs, CTAF/AFIS passes aerodrome info, the rest
+        control."""
+        if self.current_station == Station.FIS:
+            return 'fis'
+        if self.current_station == Station.CTAF:
+            return 'uncontrolled'
+        return 'control'
+
+    # -------------------------------------------------------------- #
+    # Flight-plan context — driven by the backend from live position.
+
+    def enter_arrival_field(self, airport: Airport, controlled: bool) -> None:
+        """Switch the session to the arrival field as it comes into range. For a
+        VFR arrival a controlled field is worked Tower-first (then Ground after
+        landing, by voice); an uncontrolled field is CTAF. Phase → APPROACH."""
+        self.current_airport = airport
+        if controlled:
+            self.current_station = Station.TWR
+        else:
+            self.current_station = Station.CTAF
+        # Orchestrator only calls this once the field is in range, so advance to
+        # APPROACH unless we've already touched down there.
+        if self.phase not in (Phase.GROUND_ARRIVAL, Phase.PARKED):
+            self.phase = Phase.APPROACH
+
+    def enter_enroute_fis(self, context_airport: Optional[Airport] = None) -> None:
+        """Hand the flight to the en-route FIS. context_airport (usually the
+        destination) gives the engine a frequency list for the eventual handoff.
+        Called by the orchestrator once airborne and clear of the departure field,
+        so it advances to the en-route FIS phase outright."""
+        if context_airport is not None:
+            self.current_airport = context_airport
+        self.current_station = Station.FIS
+        if self.phase not in (Phase.APPROACH, Phase.CIRCUIT,
+                              Phase.GROUND_ARRIVAL, Phase.PARKED):
+            self.phase = Phase.EN_ROUTE_FIS
 
     def _flight_status(self,
                        on_ground: Optional[bool],
@@ -524,8 +603,28 @@ class ATCSession:
 
         if airspace:
             parts.append(airspace)
+        route_note = self._route_note(lat, lon)
+        if route_note:
+            parts.append(route_note)
         parts.append(f"phase {phase}")
         return ", ".join(parts)
+
+    def _route_note(self, lat: Optional[float], lon: Optional[float]) -> Optional[str]:
+        """Where the aircraft is along the planned route, for the controller's
+        situational awareness — e.g. 'en route EDLI→EDDG, 12 NM to run, next OSN
+        4 NM ahead'. None unless a flight plan and live position are both known."""
+        if self.flight_plan is None or lat is None or lon is None:
+            return None
+        try:
+            p = self.flight_plan.progress(lat, lon)
+        except Exception:
+            return None
+        fp = self.flight_plan
+        bits = [f"flight plan {fp.summary()}",
+                f"{p.dist_to_dest_nm:.0f} NM to {fp.destination.ident}"]
+        if p.next_wp is not None and p.next_wp.is_airport is False and p.next_nm is not None:
+            bits.append(f"next {p.next_wp.ident} {p.next_nm:.0f} NM")
+        return ", ".join(bits)
 
     def _taxi_instruction(self, lat: Optional[float], lon: Optional[float]) -> str:
         """Ground taxi guidance for the LLM. With position + active runway + a

@@ -8,7 +8,7 @@ import {
   flightState, airport, activeRunway, atcCallsign, boundaryNotes,
   messages, phase, station, thinking, loading, loadingLabel,
   configStatus, pttActive, transcription, audioEnabled, vfrWeather,
-  ambientLevel,
+  ambientLevel, flightplan, flightplanStage,
 } from './store.js';
 import { playMicClick } from './sound.js';
 
@@ -223,6 +223,24 @@ function dispatch(msg) {
       if (msg.notes) boundaryNotes.set(msg.notes);
       break;
 
+    case 'flightplan_loaded': {
+      const { type, ...fp } = msg;
+      flightplan.set(fp);
+      if (fp.stage) flightplanStage.set(fp.stage);
+      break;
+    }
+
+    case 'flightplan_stage':
+      flightplanStage.set(msg.stage);
+      if (msg.station) station.set(msg.station);
+      if (msg.atc_callsign) atcCallsign.set(msg.atc_callsign);
+      break;
+
+    case 'flightplan_cleared':
+      flightplan.set(null);
+      flightplanStage.set(null);
+      break;
+
     case 'atc_message':
       messages.update(list => [...list, {
         role: msg.role,
@@ -320,6 +338,19 @@ export function sendTransmission(text) {
 
 export function loadScenario(scenarioObj) {
   sendMessage('load_scenario', { scenario: scenarioObj });
+}
+
+/** Upload an ICAO route ("EDLI OSN EDDG") to stage the journey. `overrides` is
+ *  an optional {ICAO: bool} map forcing a field's controlled status. */
+export function loadFlightplan(route, overrides = null, callsign = null) {
+  const payload = { route };
+  if (overrides) payload.controlled_overrides = overrides;
+  if (callsign)  payload.callsign = callsign;
+  sendMessage('load_flightplan', payload);
+}
+
+export function clearFlightplan() {
+  sendMessage('clear_flightplan');
 }
 
 export function setSource(src) {

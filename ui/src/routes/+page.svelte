@@ -7,8 +7,9 @@
   import AirportPanel from '$lib/AirportPanel.svelte';
   import ScenarioDrawer from '$lib/ScenarioDrawer.svelte';
   import ConfigView from '$lib/ConfigView.svelte';
+  import FlightPlanDialog from '$lib/FlightPlanDialog.svelte';
   import { scenarioDrawerOpen, wsStatus, xplaneConnected, airport, loading, loadingLabel,
-           configStatus, settingsOpen } from '$lib/store.js';
+           configStatus, settingsOpen, flightplanOpen } from '$lib/store.js';
   import { theme, applyTheme } from '$lib/theme.js';
   import { get } from 'svelte/store';
 
@@ -25,6 +26,7 @@
   // Idle: backend up, configured, nothing loading, no flight/airport yet.
   $: idle = !offline && !needsConfig && !$loading && !$airport;
   function openScenario() { scenarioDrawerOpen.set(true); }
+  function openFlightplan() { flightplanOpen.set(true); }
 </script>
 
 <svelte:head>
@@ -49,11 +51,14 @@
     <div class="idle-banner">
       {#if $xplaneConnected}
         <span class="idle-icon gi">🛬</span>
-        <span>X-Plane connected — waiting for you to load a flight. The controller wakes up once you're near an airport.</span>
+        <span>X-Plane connected — wake the controller by your position, or
+          <button class="link-btn" onclick={openFlightplan}>file a flight plan</button>
+          to stage a whole journey (departure → FIS → arrival).</span>
       {:else}
         <span class="idle-icon gi">🛩</span>
         <span>No X-Plane connection. Start a flight in X-Plane and it'll connect automatically — or
-          <button class="link-btn" onclick={openScenario}>load a scenario</button> to begin right now.</span>
+          <button class="link-btn" onclick={openFlightplan}>file a flight plan</button> /
+          <button class="link-btn" onclick={openScenario}>load a scenario</button> to begin.</span>
       {/if}
     </div>
   {/if}
@@ -66,6 +71,10 @@
 
   {#if $scenarioDrawerOpen}
     <ScenarioDrawer />
+  {/if}
+
+  {#if $flightplanOpen}
+    <FlightPlanDialog />
   {/if}
 
   {#if showConfig}

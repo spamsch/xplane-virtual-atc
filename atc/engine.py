@@ -160,8 +160,66 @@ def boundary_check(airport: Airport, acft: Optional[AircraftPerf],
 # ------------------------------------------------------------------ #
 # ATC response generation
 
+# Role line + role-specific rules per service kind. The generic rules (concise,
+# ICAO phraseology, answer only what was asked, phase-matching) are shared; the
+# difference between a controller, a FIS officer, and an uncontrolled-field radio
+# operator is authority — who may issue clearances and who may only inform.
+_ROLES = {
+    "control": "You are an air traffic controller. Call sign: {atc_callsign}.",
+    "fis": (
+        "You are a Flight Information Service (FIS) officer providing a BASIC "
+        "service to VFR traffic in uncontrolled airspace. Call sign: {atc_callsign}. "
+        "You inform and assist; you do NOT control."
+    ),
+    "uncontrolled": (
+        "You are the AFIS / radio operator at an UNCONTROLLED aerodrome — there is "
+        "NO air traffic control on this frequency. Call sign: {atc_callsign}. "
+        "Pilots self-announce their intentions and act on their own authority."
+    ),
+}
+
+_ROLE_RULES = {
+    "control": """\
+- For taxi clearances, use ONLY taxiways and holding points given to you in the
+  instructions below. Never invent, guess, or substitute taxiway letters or
+  holding-point names. If none are provided, keep the taxi instruction generic
+  (e.g. "taxi to the holding point for runway 27, follow the green centreline").
+- If the request is outside your authority (e.g. pilot asks tower questions to
+  ground), redirect them politely to the correct frequency.
+- Hand off only to a DIFFERENT station: after take-off, a Tower hands the aircraft
+  to Departure or Radar (use the frequency list above), not back to Tower.
+- Match every instruction to the Flight phase above. If the aircraft is AIRBORNE,
+  do NOT issue ground instructions — no taxi, no "report runway vacated", no
+  "hold short", no "line up". If it is ON THE GROUND, do not give airborne
+  instructions. A departing aircraft that has just lifted off gets a climb/turn,
+  a frequency change, or "report leaving the zone" — never a taxi or vacate call.""",
+    "fis": """\
+- You provide INFORMATION, not control. You CANNOT issue clearances, take-off or
+  landing clearances, headings/altitudes as instructions, or separation. NEVER
+  say "cleared". The pilot is responsible for their own navigation, terrain, and
+  separation from other traffic.
+- Give what a basic service gives: traffic information, weather, QNH, danger/
+  restricted-area activity, and navigation help on request. Phrase traffic as
+  advice and qualify it ("traffic believed to be…", "if observed", "altitude
+  unknown") — you are not separating them.
+- You may pass a squawk (usually 7000 for VFR) and acknowledge position reports
+  with "roger". Do not invent precise traffic you have no basis for.
+- When the pilot reaches their destination's airspace or leaves your area, END
+  the service: "<callsign>, basic service terminated, contact <station> on
+  <freq>, good day." Use the destination's real frequency from the list above.""",
+    "uncontrolled": """\
+- You have NO control authority. NEVER issue clearances or instructions: no
+  "cleared for take-off", no "cleared to land", no taxi clearance, no "line up",
+  no "hold short", no squawk assignment. Pilots act at their own discretion.
+- Pass only AERODROME INFORMATION: the runway in use, surface wind, QNH, and any
+  known or reported traffic. Acknowledge self-announce/blind calls with "roger".
+- A typical reply is "<callsign>, <aerodrome> Information, runway 25 in use, wind
+  250 degrees 6 knots, QNH 1015, no reported traffic." If asked for a clearance,
+  make clear you can only pass information and the decision is the pilot's.""",
+}
+
 _ATC_SYSTEM = """\
-You are an air traffic controller. Call sign: {atc_callsign}.
+{role}
 
 Situation:
 {situation}
@@ -175,24 +233,12 @@ Rules:
 - Address the pilot by their callsign on every transmission.
 - Respond ONLY to what the pilot actually said. On a bare initial contact
   (station + callsign with no request), reply "<callsign>, <station>, pass your
-  message." — nothing more. NEVER volunteer a clearance, taxi route, runway, or
-  instruction the pilot did not request.
-- Keep it concise. One clearance per transmission.
-- For taxi clearances, use ONLY taxiways and holding points given to you in the
-  instructions below. Never invent, guess, or substitute taxiway letters or
-  holding-point names. If none are provided, keep the taxi instruction generic
-  (e.g. "taxi to the holding point for runway 27, follow the green centreline").
-- If the request is outside your authority (e.g. pilot asks tower questions to
-  ground), redirect them politely to the correct frequency.
+  message." — nothing more. NEVER volunteer a clearance, instruction, or
+  information the pilot did not request.
+- Keep it concise. One item per transmission.
 - You ARE {atc_callsign}. NEVER tell the pilot to contact {atc_callsign} or to
-  switch to your own frequency — they are already talking to you. Hand off only
-  to a DIFFERENT station: after take-off, a Tower hands the aircraft to Departure
-  or Radar (use the frequency list above), not back to Tower.
-- Match every instruction to the Flight phase above. If the aircraft is AIRBORNE,
-  do NOT issue ground instructions — no taxi, no "report runway vacated", no
-  "hold short", no "line up". If it is ON THE GROUND, do not give airborne
-  instructions. A departing aircraft that has just lifted off gets a climb/turn,
-  a frequency change, or "report leaving the zone" — never a taxi or vacate call.
+  switch to your own frequency — they are already talking to you.
+{role_rules}
 
 {examples}{extra_block}"""
 
@@ -207,8 +253,16 @@ def respond(pilot_message: str,
             model: str,
             extra_instructions: Optional[str] = None,
             destination: Optional[Airport] = None,
-            flight_status: Optional[str] = None) -> str:
+            flight_status: Optional[str] = None,
+            service_kind: str = "control") -> str:
+    """Generate one ATC radio reply.
 
+    service_kind selects the operator's authority and example phraseology:
+      "control"      — a real controller (Ground/Tower/Approach): may clear.
+      "fis"          — Flight Information Service: informs only, never clears.
+      "uncontrolled" — AFIS/UNICOM at a field with no ATC: aerodrome info only.
+    """
+    kind = service_kind if service_kind in _ROLES else "control"
     situation = _build_situation(airport, acft, callsign, conditions, destination,
                                  flight_status=flight_status)
     history_text = '\n'.join(
@@ -220,13 +274,77 @@ def respond(pilot_message: str,
                    if extra_instructions else "")
 
     system = _ATC_SYSTEM.format(
+        role=_ROLES[kind].format(atc_callsign=atc_callsign),
         atc_callsign=atc_callsign,
         situation=situation,
         history=history_text,
-        examples=phraseology.render(),
+        role_rules=_ROLE_RULES[kind],
+        examples=phraseology.render_for(kind),
         extra_block=extra_block,
     )
     prompt = f"{system}\n\nPilot: {pilot_message}\nATC:"
 
-    log.debug(f"Querying {model}")
+    log.debug(f"Querying {model} (service={kind})")
     return _claude(prompt, model)
+
+
+# ------------------------------------------------------------------ #
+# Proactive (controller-initiated) transmission — no pilot prompt
+
+_PROACTIVE_SYSTEM = """\
+{role}
+
+Situation:
+{situation}
+
+Recent exchanges (most recent last):
+{history}
+
+You are about to make a PROACTIVE radio call to {callsign} — they did not just
+transmit; you are calling them. Convey exactly this, in one natural radio
+transmission:
+
+  {directive}
+
+Rules:
+- Output ONLY the radio transmission — no explanation, no stage directions.
+- Standard ICAO phraseology; address {callsign}; keep it to one short call.
+- You are a Flight Information Service: you INFORM, you do not control. Never
+  issue clearances or instructions. Qualify traffic as advice ("if observed",
+  "altitude unknown") — you are not separating anyone.
+- Do not invent specifics beyond the directive (no precise traffic the directive
+  didn't give you)."""
+
+
+def proactive(directive: str,
+              airport: Airport,
+              acft: Optional[AircraftPerf],
+              callsign: str,
+              conditions: dict,
+              atc_callsign: str,
+              history: list,
+              model: str,
+              destination: Optional[Airport] = None,
+              flight_status: Optional[str] = None,
+              service_kind: str = "fis") -> str:
+    """Generate a controller-initiated radio call (e.g. FIS passing traffic).
+
+    Unlike respond(), there is no pilot transmission — `directive` says what to
+    convey, and the model phrases it. Used by the FIS director to keep the
+    en-route service lively and position-aware."""
+    kind = service_kind if service_kind in _ROLES else "fis"
+    situation = _build_situation(airport, acft, callsign, conditions, destination,
+                                 flight_status=flight_status)
+    history_text = '\n'.join(
+        f"  Pilot: {h['pilot']}\n  ATC:   {h['atc']}"
+        for h in history[-4:]
+    ) or '  (none yet)'
+    prompt = _PROACTIVE_SYSTEM.format(
+        role=_ROLES[kind].format(atc_callsign=atc_callsign),
+        situation=situation,
+        history=history_text,
+        callsign=callsign,
+        directive=directive,
+    )
+    log.debug(f"Proactive {model} (service={kind})")
+    return _claude(f"{prompt}\n\n{atc_callsign}:", model)

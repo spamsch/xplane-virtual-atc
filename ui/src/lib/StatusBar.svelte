@@ -1,6 +1,9 @@
 <script>
-  import { wsStatus, source, scenarioName, phase, station, atcCallsign, backendUptime, xplaneConnected, settingsOpen } from './store.js';
+  import { wsStatus, source, scenarioName, phase, station, atcCallsign, backendUptime,
+           xplaneConnected, settingsOpen, flightplanOpen, flightplan, flightplanStage } from './store.js';
   import { theme, THEMES, cycleTheme } from './theme.js';
+
+  const stageLabel = { departure: 'DEP', enroute: 'EN ROUTE', arrival: 'ARR', arrival_ground: 'GND' };
 
   $: themeLabel = THEMES.find((t) => t.key === $theme)?.label ?? 'THEME';
 
@@ -9,7 +12,7 @@
     DEPARTING: 'Departing', EN_ROUTE: 'En route', EN_ROUTE_FIS: 'En route (FIS)',
     APPROACH: 'Approach', CIRCUIT: 'Circuit', GROUND_ARRIVAL: 'Ground (arr.)', PARKED: 'Parked',
   };
-  const stationLabel = { GND: 'GND', TWR: 'TWR', APP: 'APP', DEP: 'DEP', RADAR: 'RAD', FIS: 'FIS' };
+  const stationLabel = { GND: 'GND', TWR: 'TWR', APP: 'APP', DEP: 'DEP', RADAR: 'RAD', FIS: 'FIS', CTAF: 'INFO' };
 
   function fmtUptime(s) {
     const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
@@ -46,6 +49,13 @@
     {#if $scenarioName}
       <span class="scenario-name">{$scenarioName}</span>
     {/if}
+    {#if $flightplan}
+      <button class="fpl-active" onclick={() => flightplanOpen.set(true)}
+              title="Open the flight plan">
+        {$flightplan.summary}
+        {#if $flightplanStage}<span class="fpl-stage">{stageLabel[$flightplanStage] ?? $flightplanStage}</span>{/if}
+      </button>
+    {/if}
   </div>
 
   <!-- Right: ATC callsign + phase + settings -->
@@ -53,6 +63,7 @@
     <span class="station-badge">{stationLabel[$station] ?? $station}</span>
     <span class="callsign">{$atcCallsign}</span>
     <span class="phase-label muted">{phaseLabel[$phase] ?? $phase}</span>
+    <button class="fpl-btn" onclick={() => flightplanOpen.set(true)} title="Flight plan">FPL</button>
     <button class="theme-btn" onclick={cycleTheme} title="Switch UI theme">{themeLabel}</button>
     <button class="settings-btn" onclick={() => settingsOpen.set(true)} title="Settings"><span class="gi" data-tech="CFG">⚙</span></button>
   </div>
@@ -132,6 +143,24 @@
     transition: color 0.15s, border-color 0.15s;
   }
   .theme-btn:hover { color: var(--accent-blue); border-color: var(--border-bright); }
+  .fpl-btn {
+    background: var(--bg-input); border: 1px solid var(--border);
+    color: var(--text-muted); font-size: 10px; font-weight: 700;
+    letter-spacing: 0.08em; padding: 2px 7px; border-radius: var(--radius);
+    transition: color 0.15s, border-color 0.15s;
+  }
+  .fpl-btn:hover { color: var(--accent-green); border-color: var(--border-bright); }
+  .fpl-active {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: rgba(63,185,80,0.10); border: 1px solid rgba(63,185,80,0.35);
+    color: var(--accent-green); font-size: 11px; font-weight: 700;
+    letter-spacing: 0.04em; padding: 1px 7px; border-radius: var(--radius);
+  }
+  .fpl-active:hover { border-color: var(--accent-green); }
+  .fpl-stage {
+    font-size: 9px; color: var(--accent-blue);
+    border-left: 1px solid rgba(63,185,80,0.35); padding-left: 6px;
+  }
   .settings-btn {
     background: none; color: var(--text-muted); font-size: 14px;
     width: 22px; height: 22px; border-radius: var(--radius);

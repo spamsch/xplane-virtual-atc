@@ -26,12 +26,20 @@ Server → client event types:
   xplane_status    connected (bool) — live X-Plane REST link state
   loading          active (bool), label — session setup (boundary check) in progress
   config_status    checks{...}, configured (bool), current{...} — the setup "doctor"
+  flightplan_loaded route, summary, total_nm, stage, fis{callsign,freq_mhz},
+                   waypoints[{ident,kind,name,lat,lon,controlled?}]  [staged journey]
+  flightplan_stage stage ("departure"|"enroute"|"arrival"|"arrival_ground"),
+                   station, atc_callsign — the service now working you
+  flightplan_cleared (no payload) — the active plan was cleared
   error            message
 
 Client → server message types:
   pilot_transmission  text
   pilot_audio         audio (base64 WAV from mic)             [if AUDIO_ENABLED]
   load_scenario       scenario (dict matching Scenario.to_dict())
+  load_flightplan     route ("EDLI OSN EDDG"), controlled_overrides? ({ICAO:bool}),
+                      callsign? — stage a journey from the route's departure field
+  clear_flightplan    (no payload) — drop the active plan
   set_source          source ("xplane"|"simulated")
   set_config          config {elevenlabs_api_key?, openai_api_key?, xplane_path?, xplane_ptt_dataref?}
   set_ambient         level ("off"|"light"|"medium"|"heavy"), rules? (["VFR","IFR"])
@@ -65,7 +73,7 @@ from airport.parser import parse_apt_dat, Airport
 from airport.database import AirportDB
 from atc import engine as atc_engine
 from atc.parser import parse as parse_radio_call
-from atc.session import ATCSession, Station, _dist_bearing_nm
+from atc.session import ATCSession, Station, Phase, _dist_bearing_nm
 from traffic.library import (
     load_library, classify_size, render as _render_interaction,
     RenderContext, InteractionLibrary,
@@ -73,6 +81,8 @@ from traffic.library import (
 from traffic.ambient import AmbientPlanner
 from airspace.database import AirspaceDB, Airspace
 from airspace import openaip as airspace_openaip
+from navigation.navaids import NavaidDB, parse_nav_data
+from flightplan.plan import FlightPlan, parse_route, RouteError
 from xplane.connector import FlightState
 from xplane.rest_connector import XPlaneRestConnector, encode_fixed_string
 from xplane.ptt_listener import PTTListener
@@ -171,6 +181,16 @@ _user_speaking: bool = False             # pilot is keying the mic → no traffi
 _airspace_db: Optional[AirspaceDB] = None    # airspace for the current country
 _airspace_country: Optional[str] = None      # ISO code currently loaded
 _airspace_loading: bool = False              # a load is in flight
+
+# ── Flight plan (the staged journey) ─────────────────────────────────────────
+_navaid_db: Optional[NavaidDB] = None        # VOR/NDB/fix lookup (lazy)
+_navaid_db_loading: bool = False
+_flightplan: Optional[FlightPlan] = None     # active plan, or None
+# Where we are in the plan: which service is working us. One-way progression
+# departure → enroute → arrival → arrival_ground, advanced by live position so a
+# transition fires once, not on every poll.
+_fp_stage: Optional[str] = None
+_fp_rng = random.Random()                    # FIS director event selection
 
 MAX_AUDIO_BYTES = 2 * 1024 * 1024   # 2 MB ≈ 62 s at 16 kHz 16-bit mono
 ACF_TAILNUM_BYTES = 40              # sim/aircraft/view/acf_tailnum is char[40]
@@ -599,10 +619,13 @@ async def _send_current_state(ws: WebSocketServerProtocol):
         await _send_to(ws, "state_update", **_state_dict(_driver.state))
     if _current_airport:
         await _send_to(ws, "airport_detected", **_airport_dict(_current_airport))
+    if _flightplan is not None:
+        await _send_to(ws, "flightplan_loaded", **_flightplan_dict(_flightplan))
     history = _session._history if _session else []
     for entry in history:
-        await _send_to(ws, "atc_message", role="pilot",
-                       text=entry["pilot"], model=None, timestamp=0)
+        if entry.get("pilot"):     # proactive FIS calls carry no pilot line
+            await _send_to(ws, "atc_message", role="pilot",
+                           text=entry["pilot"], model=None, timestamp=0)
         await _send_to(ws, "atc_message", role="atc",
                        text=entry["atc"], model=entry.get("model"), timestamp=0)
 
@@ -639,6 +662,12 @@ async def _handle_client_message(msg: dict):
         asyncio.create_task(_process_audio_transmission(msg["audio"]))
     elif t == "load_scenario":
         await _load_scenario(msg["scenario"])
+    elif t == "load_flightplan":
+        await _load_flightplan(msg.get("route", ""),
+                               msg.get("controlled_overrides"),
+                               msg.get("callsign"))
+    elif t == "clear_flightplan":
+        await _clear_flightplan()
     elif t == "set_source":
         await _set_source(msg["source"])
     elif t == "set_callsign":
@@ -796,6 +825,7 @@ async def _process_audio_transmission(audio_b64: str):
 
 async def _load_scenario(data: dict):
     global _driver, _source, _current_airport, _current_acft, _session
+    global _flightplan, _fp_stage
 
     try:
         scenario = Scenario.from_dict(data)
@@ -805,6 +835,10 @@ async def _load_scenario(data: dict):
 
     _current_airport = None
     _session = None
+    if _flightplan is not None:
+        _flightplan = None
+        _fp_stage = None
+        await _broadcast("flightplan_cleared")
 
     # Leaving the live X-Plane source — tear down its PTT listener + link state.
     await _set_xplane_connected(False)
@@ -832,12 +866,17 @@ async def _load_scenario(data: dict):
 
 async def _new_flight():
     global _session, _current_airport, _current_acft, _prev_ptt, _ambient_size, _user_speaking
+    global _flightplan, _fp_stage
     log.info("New flight — resetting ATC session")
     _session = None
     _current_airport = None
     _current_acft = None
     _ambient_size = None
     _user_speaking = False
+    if _flightplan is not None:
+        _flightplan = None
+        _fp_stage = None
+        await _broadcast("flightplan_cleared")
     if _prev_ptt:
         await _broadcast("ptt_end")
     _prev_ptt = False
@@ -1077,8 +1116,17 @@ async def _set_airport_inner(airport: Airport, scenario: Optional[Scenario] = No
                 f"wind {int(wx.wind_dir_deg)}°/{int(wx.wind_speed_kts)} kt"
             )
 
-    # Look up destination airport (if scenario specifies one)
+    # Look up destination airport — from the active flight plan first, else the
+    # scenario. The flight plan owns the journey when present.
     destination: Optional[Airport] = None
+    if _flightplan is not None and _flightplan.destination.airport is not None:
+        destination = _flightplan.destination.airport
+        dico = destination.icao
+        if dico not in session_conditions:
+            session_conditions[dico] = {
+                'qnh': 1013, 'wind_dir': 0, 'wind_kts': 0, 'visibility_km': 10,
+                'active_runway': '',
+            }
     if scenario and scenario.destination_airport and _airport_db:
         destination = _airport_db.get(scenario.destination_airport)
         if destination:
@@ -1139,6 +1187,7 @@ async def _set_airport_inner(airport: Airport, scenario: Optional[Scenario] = No
         aircraft=_current_acft,
         callsign=callsign,
         conditions=session_conditions,
+        flight_plan=_flightplan,
     )
 
     await _broadcast("phase_change",
@@ -1310,9 +1359,343 @@ def _should_adopt_airport(new_airport: Airport, state: FlightState) -> bool:
     return True
 
 
+# ------------------------------------------------------------------ #
+# Flight plan — the staged journey
+#
+# A plan stages the flight the way real VFR ops run it: an uncontrolled
+# departure self-announces on CTAF/AFIS, an en-route FIS works the leg and
+# follows your position, and a controlled arrival is Tower→Ground. The service
+# in charge progresses with your position (not the nearest-airport detector),
+# and a director keeps the FIS lively — traffic, situations, and the handoff.
+
+# How far from the departure field counts as "clear of the circuit, now en route".
+_FP_DEPARTURE_CLEAR_NM = 5.0
+# How close to the destination flips the en-route FIS to the arrival service.
+_FP_ARRIVAL_RANGE_NM = 13.0
+# FIS director cadence (seconds between proactive calls), jittered.
+_FIS_GAP_MIN, _FIS_GAP_MAX = 70.0, 115.0
+
+
+def _waypoint_dict(w) -> dict:
+    d = {"ident": w.ident, "kind": w.kind, "name": w.name,
+         "lat": w.lat, "lon": w.lon}
+    if w.is_airport:
+        d["controlled"] = bool(w.controlled)
+    return d
+
+
+def _flightplan_dict(fp: FlightPlan) -> dict:
+    return {
+        "route": fp.route,
+        "summary": fp.summary(),
+        "total_nm": round(fp.total_nm, 1),
+        "stage": _fp_stage,
+        "fis": {"callsign": fp.fis.callsign, "freq_mhz": fp.fis.freq_mhz},
+        "waypoints": [_waypoint_dict(w) for w in fp.waypoints],
+    }
+
+
+async def _load_flightplan(route: str, overrides=None, callsign=None):
+    """Parse a route string and stage the journey from its departure field."""
+    global _flightplan, _fp_stage
+
+    if not route or not route.strip():
+        await _broadcast("error", message="Enter a route, e.g. EDLI OSN EDDG.")
+        return
+    if not await _ensure_airport_db():
+        await _broadcast("error",
+                         message="No airport database — set your X-Plane path in Settings first.")
+        return
+    navaid_db = await _ensure_navaid_db()
+    overrides = {str(k).upper(): bool(v) for k, v in (overrides or {}).items()}
+
+    try:
+        fp = parse_route(route, _airport_db, navaid_db, overrides)
+    except RouteError as e:
+        await _broadcast("error", message=str(e))
+        return
+
+    _flightplan = fp
+    _fp_stage = "departure"
+    log.info(f"Flight plan loaded: {fp.summary()} ({fp.total_nm:.0f} NM), "
+             f"en route {fp.fis.callsign}")
+    if callsign:
+        await _set_callsign(callsign)
+
+    await _broadcast("flightplan_loaded", **_flightplan_dict(fp))
+
+    # Stage from the departure field. _set_airport_inner reads _flightplan, so the
+    # session it builds is plan-aware (CTAF start if the departure is uncontrolled,
+    # destination set from the plan).
+    await _set_airport(fp.departure.airport)
+
+
+async def _clear_flightplan():
+    global _flightplan, _fp_stage
+    if _flightplan is None:
+        return
+    log.info("Flight plan cleared")
+    _flightplan = None
+    _fp_stage = None
+    await _broadcast("flightplan_cleared")
+
+
+def _fp_active_runway(icao: str) -> str:
+    raw = (_session.conditions.get(icao) or {}) if _session else {}
+    rwy = str(raw.get("active_runway", "") or "").strip()
+    return "" if rwy.lower() in ("", "unknown") else rwy
+
+
+async def _fp_broadcast_service():
+    """Tell the UI which service is now working us (station, callsign, phase)."""
+    if _session is None:
+        return
+    await _broadcast(
+        "phase_change",
+        phase=_session.phase.value,
+        station=_session.current_station.value,
+        atc_callsign=_session._atc_callsign(),
+        active_runway=_fp_active_runway(_session.current_airport.icao),
+        notes="")
+    if _flightplan is not None:
+        await _broadcast("flightplan_stage", stage=_fp_stage,
+                         station=_session.current_station.value,
+                         atc_callsign=_session._atc_callsign())
+
+
+async def _emit_controller_line(text: str, *, model: Optional[str] = None,
+                                station: Optional[str] = None):
+    """Broadcast a controller-initiated transmission and (if audio is on) speak
+    it on the half-duplex channel. Used for proactive FIS calls — it appears in
+    the chat as an ATC message and is recorded in session history."""
+    if _session is not None:
+        _session._history.append({
+            "pilot": "", "atc": text, "model": model,
+            "station": (station or _session.current_station.value),
+        })
+    await _broadcast("atc_message", role="atc", text=text, model=model,
+                     timestamp=time.time())
+    if _AUDIO_READY:
+        try:
+            spoken = _radio_text.to_spoken(text)
+            samples, sr = await asyncio.to_thread(_audio_tts.synthesize, spoken)
+            samples = _audio_radio.apply_radio_fx(samples, sr)
+            await _play_on_channel(samples, sr, event="atc_audio",
+                                   text=text, model=model, timestamp=time.time())
+        except Exception as e:
+            log.debug(f"FIS TTS failed: {e}")
+
+
+def _fis_context():
+    """(directive-free) context for a proactive FIS call: the kwargs engine.proactive
+    needs, drawn from the live session. None if not in a usable state."""
+    if _session is None or _flightplan is None or _driver is None:
+        return None
+    st = _driver.state
+    if not st.is_flight_loaded:
+        return None
+    flight_status = _session._flight_status(
+        on_ground=st.on_ground > 0.5, altitude_ft=st.alt_ind_ft,
+        gs_kts=st.gs_kts, lat=st.lat, lon=st.lon,
+        airspace=_airspace_note(st) if _source == "xplane" else None)
+    return dict(
+        airport=_session.current_airport, acft=_current_acft,
+        callsign=_session.callsign, conditions=_session._flat_conditions(),
+        atc_callsign=_session._atc_callsign(), history=_session._history,
+        model=config.MODEL_ROUTINE, destination=_session.destination,
+        flight_status=flight_status, service_kind="fis",
+    )
+
+
+def _fis_directive(state) -> str:
+    """Pick what the FIS should proactively say next, grounded in live geometry.
+    Weighted across traffic, a 'situation', a position-report request, and an
+    information/weather call so the frequency stays lively and varied."""
+    prog = _flightplan.progress(state.lat, state.lon)
+    alt = int(round((state.alt_ind_ft or 1500) / 100.0) * 100)
+    r = _fp_rng.random()
+
+    if r < 0.46:   # traffic information — the staple of a basic service
+        clock = _fp_rng.choice([10, 11, 11, 12, 1, 1, 2, 3, 9])
+        dist = _fp_rng.randint(2, 7)
+        rel = _fp_rng.choice([
+            "opposite direction", "crossing left to right",
+            "crossing right to left", "same direction", "manoeuvring"])
+        typ = _fp_rng.choice([
+            "a light aircraft", "a PA28", "a Cessna 172", "a microlight",
+            "a glider", "an unknown contact", "a helicopter"])
+        lvl = _fp_rng.choice([
+            f"indicating {max(500, alt + _fp_rng.choice([-700, -400, 400, 700]))} feet",
+            "altitude unknown", "similar altitude", "altitude unverified"])
+        return (f"Pass traffic information: traffic, {clock} o'clock, {dist} miles, "
+                f"{rel}, {typ}, {lvl}.")
+
+    if r < 0.66:   # a 'situation' — caution-type information
+        return _fp_rng.choice([
+            "Pass an information/caution: parachute dropping in progress within 5 "
+            "miles of your track, up to flight level 100, caution.",
+            "Pass an information/caution: intense glider activity reported along "
+            "your route up to 4000 feet.",
+            "Pass an information/caution: military low-level flying activity "
+            "reported in your area at and below 2000 feet AGL.",
+            "Pass an information/caution: a temporary segregated area is active "
+            "about 8 miles south of your track, recommend you remain clear.",
+            "Pass an information: a NATO exercise is increasing traffic on this "
+            "frequency today; report any traffic sighted.",
+        ])
+
+    if r < 0.82 and prog.next_wp is not None and not prog.next_wp.is_airport:
+        return f"Request the pilot report passing {prog.next_wp.ident}."
+
+    # Information / reassurance / weather.
+    dest = _flightplan.destination
+    qnh = (_session.conditions.get(dest.ident) or {}).get("qnh") if _session else None
+    qtxt = f" {dest.ident} QNH {qnh}." if qnh else ""
+    return _fp_rng.choice([
+        f"Advise no further reported traffic in the pilot's area.{qtxt}",
+        f"Give a position/progress check: confirm still routing to {dest.ident}, "
+        f"about {prog.dist_to_dest_nm:.0f} miles to run.",
+        f"Advise the destination weather is being passed: {dest.ident} VFR, "
+        f"no significant change.{qtxt}",
+    ])
+
+
+async def _fis_emit_proactive():
+    """Generate one proactive FIS call from live geometry and play it."""
+    ctx = _fis_context()
+    if ctx is None or _user_speaking or _thinking_count > 0:
+        return
+    directive = _fis_directive(_driver.state)
+    async with _tx_lock:
+        if _user_speaking:
+            return
+        await _thinking_enter()
+        try:
+            text = await asyncio.to_thread(
+                lambda: atc_engine.proactive(directive=directive, **ctx))
+        except Exception as e:
+            log.debug(f"FIS proactive generation failed: {e}")
+            return
+        finally:
+            await _thinking_exit()
+        if text:
+            log.info(f"FIS proactive: {text}")
+            await _emit_controller_line(text, model=config.MODEL_ROUTINE,
+                                        station="fis")
+
+
+async def _fis_emit_handoff(dest_ap: Airport):
+    """FIS terminates the basic service and hands the flight to the arrival
+    field's controller (Tower/Approach), with the real frequency."""
+    ctx = _fis_context()
+    if ctx is None:
+        return
+    # VFR arrival: hand to Tower (then Ground after landing, by voice). Fall back
+    # to Approach only if the field publishes no Tower frequency.
+    next_freq = None
+    next_label = "Tower"
+    twr = dest_ap.freq(54)
+    app = dest_ap.freq(55)
+    if twr:
+        next_freq, next_label = twr.freq_mhz, "Tower"
+    elif app:
+        next_freq, next_label = app.freq_mhz, "Approach"
+    city = dest_ap.name.split()[0]
+    freq_txt = f" {next_freq:.3f}" if next_freq else ""
+    directive = (f"Terminate the basic service and hand off: squawk 7000, "
+                 f"contact {city} {next_label}{freq_txt} for arrival.")
+    async with _tx_lock:
+        await _thinking_enter()
+        try:
+            text = await asyncio.to_thread(
+                lambda: atc_engine.proactive(directive=directive, **ctx))
+        except Exception as e:
+            log.debug(f"FIS handoff generation failed: {e}")
+            text = (f"{_session.callsign}, basic service terminated, squawk 7000, "
+                    f"contact {city} {next_label}{freq_txt}, good day.")
+        finally:
+            await _thinking_exit()
+    await _emit_controller_line(text, model=config.MODEL_ROUTINE, station="fis")
+
+
+async def _flightplan_progress(state: FlightState):
+    """Advance the staged journey from the live position. One-way transitions
+    keyed on `_fp_stage`, so each fires exactly once."""
+    global _fp_stage
+    if _flightplan is None or _session is None or not state.is_flight_loaded:
+        return
+    fp = _flightplan
+    airborne = state.on_ground < 0.5
+    prog = fp.progress(state.lat, state.lon)
+    dest = fp.destination
+    dest_ap = dest.airport
+
+    if _fp_stage == "departure":
+        if airborne and prog.dist_from_dep_nm >= _FP_DEPARTURE_CLEAR_NM:
+            _fp_stage = "enroute"
+            _session.enter_enroute_fis(context_airport=dest_ap)
+            log.info(f"Flight plan → en route, {fp.fis.callsign}")
+            await _fp_broadcast_service()
+
+    elif _fp_stage == "enroute":
+        if prog.dist_to_dest_nm <= _FP_ARRIVAL_RANGE_NM:
+            _fp_stage = "arrival"
+            if dest.controlled:
+                try:
+                    await _fis_emit_handoff(dest_ap)
+                except Exception as e:
+                    log.debug(f"FIS handoff skipped: {e}")
+            _session.enter_arrival_field(dest_ap, bool(dest.controlled))
+            log.info(f"Flight plan → arrival at {dest.ident} "
+                     f"({'controlled' if dest.controlled else 'uncontrolled'})")
+            await _fp_broadcast_service()
+
+    elif _fp_stage == "arrival":
+        if not airborne and prog.dist_to_dest_nm <= 6.0 and (state.gs_kts or 0) < 40:
+            _fp_stage = "arrival_ground"
+            if dest.controlled:
+                _session.current_station = Station.GND
+            _session.phase = Phase.GROUND_ARRIVAL
+            log.info(f"Flight plan → landed/taxiing at {dest.ident}")
+            await _fp_broadcast_service()
+
+
+async def _fis_director_loop():
+    """Keep the en-route FIS lively: while the flight plan has us en route and
+    airborne, emit a proactive position-aware call every minute or so. Self-gates
+    on every tick, so a stage change, keyed mic, or lost link stops it at once."""
+    while True:
+        if (_flightplan is None or _fp_stage != "enroute" or _session is None
+                or _driver is None):
+            await asyncio.sleep(3.0)
+            continue
+        try:
+            st = _driver.state
+            airborne = st.is_flight_loaded and st.on_ground < 0.5
+        except Exception:
+            airborne = False
+        if not airborne:
+            await asyncio.sleep(3.0)
+            continue
+
+        gap = _fp_rng.uniform(_FIS_GAP_MIN, _FIS_GAP_MAX)
+        deadline = time.monotonic() + gap
+        while time.monotonic() < deadline:
+            await asyncio.sleep(2.0)
+            if _flightplan is None or _fp_stage != "enroute":
+                break
+        if _flightplan is None or _fp_stage != "enroute":
+            continue
+        try:
+            await _fis_emit_proactive()
+        except Exception as e:
+            log.debug(f"FIS director tick failed: {e}")
+
+
 async def _state_poll_loop():
     global _startup_vfr_done
     last_airport_check = 0.0
+    last_fp_check = 0.0
 
     while True:
         if _driver:
@@ -1331,9 +1714,15 @@ async def _state_poll_loop():
                         log.info("VFR_WEATHER_ON_START — applying VFR day at startup")
                         asyncio.create_task(_set_vfr_weather())
 
-                    # Re-check airport every 10 s
                     now = time.time()
-                    if _airport_db and now - last_airport_check > 10.0:
+                    if _flightplan is not None:
+                        # A plan owns the journey: progress the staged services by
+                        # position (every ~4 s) instead of nearest-airport adoption.
+                        if now - last_fp_check > 4.0:
+                            last_fp_check = now
+                            await _flightplan_progress(state)
+                    elif _airport_db and now - last_airport_check > 10.0:
+                        # Re-check airport every 10 s (no plan active)
                         last_airport_check = now
                         airport = _airport_db.nearest(state.lat, state.lon)
                         if (airport
@@ -1405,6 +1794,32 @@ async def _ensure_airport_db(force: bool = False) -> bool:
         _airport_db_loading = False
     await _broadcast_config_status()
     return True
+
+
+async def _ensure_navaid_db() -> Optional[NavaidDB]:
+    """Parse earth_nav.dat + earth_fix.dat for route-point resolution. Lazy and
+    non-fatal: a missing file just means intermediate fixes can't be resolved (a
+    plan still stages departure→FIS→destination). Cached after first parse."""
+    global _navaid_db, _navaid_db_loading
+    if _navaid_db is not None:
+        return _navaid_db
+    if _navaid_db_loading:
+        return None
+    nav = config.first_existing(config.NAV_DATA_PATHS["nav"])
+    fix = config.first_existing(config.NAV_DATA_PATHS["fix"])
+    if nav is None and fix is None:
+        log.info("No earth_nav.dat / earth_fix.dat found — route fixes won't resolve")
+        return None
+    _navaid_db_loading = True
+    try:
+        _navaid_db = await asyncio.to_thread(parse_nav_data, nav, fix)
+        log.info(f"Navaid DB ready: {len(_navaid_db):,} points")
+    except Exception as e:
+        log.warning(f"Navaid DB load failed: {e}")
+        _navaid_db = None
+    finally:
+        _navaid_db_loading = False
+    return _navaid_db
 
 
 def _config_status() -> dict:
@@ -1619,6 +2034,7 @@ async def run():
             _heartbeat_loop(),
             _xplane_probe_loop(),
             _ambient_loop(),
+            _fis_director_loop(),
         )
 
 

@@ -60,6 +60,19 @@ The system has three layers that compose cleanly: a **data source**, an **ATC se
 
 `atc/parser.py` extracts station, callsign, and message from raw pilot radio text via regex.
 
+### Flight plans (staged journeys)
+
+A flight plan turns an ICAO route into a staged VFR journey: uncontrolled departure → en-route FIS → controlled arrival. Two new packages back it:
+
+- `navigation/navaids.py` parses X-Plane's `earth_nav.dat` (VOR/NDB) and `earth_fix.dat` (fixes) into an ident→positions lookup, pickle-cached like apt.dat. `resolve(ident, ref_lat, ref_lon)` picks the candidate nearest a reference point (idents repeat worldwide), biased toward a real navaid over a fix. Path discovery is in `config.NAV_DATA_PATHS` (Custom Data wins over default data).
+- `flightplan/plan.py` — `parse_route("EDLI OSN EDDG", airport_db, navaid_db)` → a `FlightPlan` of `Waypoint`s (first/last are airports, middle are navaids/fixes). `is_controlled()` classifies a field by **Ground/Approach/Departure** presence, NOT a lone Tower frequency — many German AFIS fields (e.g. Bielefeld "Info") carry a Tower-coded frequency but have no control service. The UI can override per ICAO. `fis_station_for(lat, lon)` names the en-route service by FIR (Bremen north / Langen south in Germany). `FlightPlan.progress(lat, lon)` projects a live position onto the route for distance-to-run / next-waypoint.
+
+`ATCSession` is flight-plan aware: an uncontrolled departure opens on `Station.CTAF` (self-announce, no clearances, no squawk), the en-route leg uses `Station.FIS` with the plan's regional callsign, and a controlled arrival runs Approach/Tower→Ground. In flight-plan mode the info-service context (CTAF vs FIS — both spoken "Information") is **position-driven, not voice-driven**: `process()` ignores voice station-switches while in an info context, so "request departure information" can't be mistaken for a Departure/Radar handoff. The orchestrator drives context via `enter_enroute_fis()` / `enter_arrival_field()`.
+
+`atc/engine.py` `respond(..., service_kind=)` selects the operator's authority and example phraseology: `control` (may clear), `fis` (informs only), `uncontrolled` (aerodrome info only). `engine.proactive(directive, ...)` generates a controller-initiated call (no pilot prompt) — used by the FIS director.
+
+In `backend/server.py`, a `load_flightplan` message stages the journey from the departure field; `_flightplan_progress()` advances the service by live position (one-way stage machine departure → enroute → arrival → arrival_ground); and `_fis_director_loop()` keeps the en-route FIS lively — proactive, position-grounded traffic and "situations" every ~90 s, plus the basic-service-terminated handoff at the destination. New UI events: `flightplan_loaded`, `flightplan_stage`, `flightplan_cleared`.
+
 ### Backend / transport
 
 `backend/server.py` runs an asyncio WebSocket server at `ws://localhost:8765`. It polls flight state, auto-detects the nearest airport every 10 s, fires boundary_check on airport change, maintains one `ATCSession` per airport, and fans LLM calls out to a thread pool to avoid blocking the event loop. All state changes are broadcast as typed JSON events to connected UI clients.
