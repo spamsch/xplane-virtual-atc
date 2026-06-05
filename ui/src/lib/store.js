@@ -25,6 +25,7 @@ export const thinking = writable(false);
 // Flight plan (the staged journey)
 export const flightplan      = writable(null);   // {route, summary, total_nm, fis, waypoints[]} or null
 export const flightplanStage = writable(null);   // 'departure'|'enroute'|'arrival'|'arrival_ground'
+export const flightplanFreq  = writable(null);   // MHz COM1 should be on for the current service
 export const flightplanOpen  = writable(false);  // the route popup is open
 
 // UI

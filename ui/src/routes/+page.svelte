@@ -9,7 +9,9 @@
   import ConfigView from '$lib/ConfigView.svelte';
   import FlightPlanDialog from '$lib/FlightPlanDialog.svelte';
   import { scenarioDrawerOpen, wsStatus, xplaneConnected, airport, loading, loadingLabel,
-           configStatus, settingsOpen, flightplanOpen } from '$lib/store.js';
+           configStatus, settingsOpen, flightplanOpen, flightplan, flightplanFreq,
+           atcCallsign, com1Mhz } from '$lib/store.js';
+  import { tuneCom1 } from '$lib/ws.js';
   import { theme, applyTheme } from '$lib/theme.js';
   import { get } from 'svelte/store';
 
@@ -25,8 +27,12 @@
   $: showConfig = !offline && (needsConfig || $settingsOpen);
   // Idle: backend up, configured, nothing loading, no flight/airport yet.
   $: idle = !offline && !needsConfig && !$loading && !$airport;
+  // Flight-plan frequency nudge: the staged service wants a COM1 you're not on.
+  $: freqMismatch = !offline && $flightplan && $flightplanFreq
+                    && Math.abs(($com1Mhz ?? 0) - $flightplanFreq) > 0.02;
   function openScenario() { scenarioDrawerOpen.set(true); }
   function openFlightplan() { flightplanOpen.set(true); }
+  function tuneToService() { if ($flightplanFreq) tuneCom1($flightplanFreq); }
 </script>
 
 <svelte:head>
@@ -60,6 +66,15 @@
           <button class="link-btn" onclick={openFlightplan}>file a flight plan</button> /
           <button class="link-btn" onclick={openScenario}>load a scenario</button> to begin.</span>
       {/if}
+    </div>
+  {/if}
+
+  {#if freqMismatch}
+    <div class="freq-banner">
+      <span class="freq-icon gi" data-tech="RDO">📻</span>
+      <span>Tune <strong>COM1</strong> to <strong>{$flightplanFreq.toFixed(3)}</strong>
+        for <strong>{$atcCallsign}</strong> — your radio is on {($com1Mhz ?? 0).toFixed(3)}.</span>
+      <button class="freq-tune-btn" onclick={tuneToService}>Tune COM1</button>
     </div>
   {/if}
 
@@ -252,4 +267,23 @@
     text-decoration: underline; cursor: pointer;
   }
   .link-btn:hover { opacity: 0.8; }
+
+  /* Frequency nudge (flight plan staged a service your COM1 isn't tuned to) */
+  .freq-banner {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 16px;
+    background: rgba(210, 153, 34, 0.14);
+    border-bottom: 1px solid rgba(210, 153, 34, 0.4);
+    color: var(--text); font-size: 12px; flex-shrink: 0;
+  }
+  .freq-icon { font-size: 14px; }
+  .freq-banner strong { color: var(--accent-amber); }
+  .freq-tune-btn {
+    margin-left: auto;
+    background: var(--accent-amber); color: #000;
+    font-weight: 700; font-size: 11px; letter-spacing: 0.04em;
+    padding: 4px 12px; border-radius: var(--radius);
+    white-space: nowrap;
+  }
+  .freq-tune-btn:hover { opacity: 0.85; }
 </style>

@@ -8,7 +8,7 @@ import {
   flightState, airport, activeRunway, atcCallsign, boundaryNotes,
   messages, phase, station, thinking, loading, loadingLabel,
   configStatus, pttActive, transcription, audioEnabled, vfrWeather,
-  ambientLevel, flightplan, flightplanStage,
+  ambientLevel, flightplan, flightplanStage, flightplanFreq,
 } from './store.js';
 import { playMicClick } from './sound.js';
 
@@ -234,11 +234,13 @@ function dispatch(msg) {
       flightplanStage.set(msg.stage);
       if (msg.station) station.set(msg.station);
       if (msg.atc_callsign) atcCallsign.set(msg.atc_callsign);
+      flightplanFreq.set(msg.expected_freq ?? null);
       break;
 
     case 'flightplan_cleared':
       flightplan.set(null);
       flightplanStage.set(null);
+      flightplanFreq.set(null);
       break;
 
     case 'atc_message':
@@ -351,6 +353,11 @@ export function loadFlightplan(route, overrides = null, callsign = null) {
 
 export function clearFlightplan() {
   sendMessage('clear_flightplan');
+}
+
+/** Tune COM1 in X-Plane to a frequency (MHz). */
+export function tuneCom1(freqMhz) {
+  sendMessage('tune_com1', { freq_mhz: freqMhz });
 }
 
 export function setSource(src) {
