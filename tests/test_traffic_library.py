@@ -244,8 +244,9 @@ class TestBuiltinLibrary:
     def test_loads_and_validates(self):
         lib = load_library()
         assert len(lib) > 0
+        from traffic.library import VALID_STATIONS
         for it in lib.all:
-            assert it.station in {"ground", "tower", "approach", "radar", "fis"}
+            assert it.station in VALID_STATIONS
             assert it.flight_rules in {"VFR", "IFR"}
             assert it.lines
 

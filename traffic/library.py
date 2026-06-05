@@ -50,7 +50,7 @@ log = logging.getLogger(__name__)
 
 _BUILTIN_DIR = Path(__file__).parent / "interactions"
 
-VALID_STATIONS = {"ground", "tower", "approach", "radar", "fis"}
+VALID_STATIONS = {"ground", "tower", "approach", "radar", "fis", "ctaf"}
 VALID_RULES = {"VFR", "IFR"}
 VALID_SIZES = {"small", "medium", "large"}
 

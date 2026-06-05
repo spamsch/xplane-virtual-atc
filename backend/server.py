@@ -82,7 +82,7 @@ from traffic.ambient import AmbientPlanner
 from airspace.database import AirspaceDB, Airspace
 from airspace import openaip as airspace_openaip
 from navigation.navaids import NavaidDB, parse_nav_data
-from flightplan.plan import FlightPlan, parse_route, RouteError
+from flightplan.plan import FlightPlan, parse_route, RouteError, field_service_freq
 from xplane.connector import FlightState
 from xplane.rest_connector import XPlaneRestConnector, encode_fixed_string
 from xplane.ptt_listener import PTTListener
@@ -302,6 +302,12 @@ def _tuned_station() -> Optional[Station]:
     dial doesn't match anything (or we have no live radio)."""
     if _session is None:
         return None
+    # In flight-plan mode the staged service wins over the dial: the plan has
+    # already handed you departure→FIS→arrival by position, so the party-line
+    # must match that — otherwise, still tuned to your departure field, you'd
+    # keep hearing its traffic while the controller you're talking to is FIS.
+    if _flightplan is not None:
+        return _session.current_station
     if _source == "xplane" and _driver is not None:
         try:
             com1 = _driver.state.com1_mhz
@@ -354,7 +360,9 @@ def _ambient_plan():
         station_name = "fis"
         size = None
         rules = ["VFR"]
-        atc_callsign = "Information"
+        # Name the en-route service from the flight plan (e.g. "Bremen
+        # Information") so ambient traffic calls the same FIS you're working.
+        atc_callsign = _flightplan.fis.callsign if _flightplan is not None else "Information"
     else:
         if st is None:
             st = _session.current_station
@@ -589,6 +597,7 @@ _AMBIENT_STATION_NAME: dict = {
     Station.DEP:   "radar",
     Station.RADAR: "radar",
     Station.FIS:   "fis",
+    Station.CTAF:  "ctaf",   # uncontrolled aerodrome — self-announce blind calls
 }
 
 # Station enum → spoken controller suffix (for the ambient controller callsign).
@@ -599,6 +608,7 @@ _AMBIENT_STATION_LABEL: dict = {
     Station.DEP:   "Departure",
     Station.RADAR: "Radar",
     Station.FIS:   "Information",
+    Station.CTAF:  "Traffic",   # blind calls address "<field> Traffic", no controller
 }
 
 
@@ -621,6 +631,11 @@ async def _send_current_state(ws: WebSocketServerProtocol):
         await _send_to(ws, "airport_detected", **_airport_dict(_current_airport))
     if _flightplan is not None:
         await _send_to(ws, "flightplan_loaded", **_flightplan_dict(_flightplan))
+        if _session is not None:
+            await _send_to(ws, "flightplan_stage", stage=_fp_stage,
+                           station=_session.current_station.value,
+                           atc_callsign=_session._atc_callsign(),
+                           expected_freq=_fp_expected_freq())
     history = _session._history if _session else []
     for entry in history:
         if entry.get("pilot"):     # proactive FIS calls carry no pilot line
@@ -1369,7 +1384,9 @@ def _should_adopt_airport(new_airport: Airport, state: FlightState) -> bool:
 # and a director keeps the FIS lively — traffic, situations, and the handoff.
 
 # How far from the departure field counts as "clear of the circuit, now en route".
-_FP_DEPARTURE_CLEAR_NM = 5.0
+# Kept short for an uncontrolled field — there's no zone to clear, so FIS picks
+# you up soon after you climb out.
+_FP_DEPARTURE_CLEAR_NM = 3.0
 # How close to the destination flips the en-route FIS to the arrival service.
 _FP_ARRIVAL_RANGE_NM = 13.0
 # FIS director cadence (seconds between proactive calls), jittered.
@@ -1428,6 +1445,9 @@ async def _load_flightplan(route: str, overrides=None, callsign=None):
     # session it builds is plan-aware (CTAF start if the departure is uncontrolled,
     # destination set from the plan).
     await _set_airport(fp.departure.airport)
+    # Announce the opening service + the frequency to be on, so the UI can nudge
+    # COM1 onto the departure field's frequency from the start.
+    await _fp_broadcast_service()
 
 
 async def _clear_flightplan():
@@ -1446,10 +1466,42 @@ def _fp_active_runway(icao: str) -> str:
     return "" if rwy.lower() in ("", "unknown") else rwy
 
 
+# Station → apt.dat frequency type code, for resolving the frequency a controlled
+# service is on at the current field.
+_STATION_FREQ_TYPE = {Station.GND: 53, Station.TWR: 54, Station.APP: 55,
+                      Station.RADAR: 56, Station.DEP: 56}
+
+
+def _fp_expected_freq() -> Optional[float]:
+    """The COM1 frequency the pilot should be on for the service now working
+    them: the field's CTAF/AFIS at an uncontrolled stop, the plan's FIS frequency
+    en route, or the controlled field's Ground/Tower/Approach frequency. None if
+    it can't be resolved (then the UI shows no nudge)."""
+    if _session is None:
+        return None
+    ap = _session.current_airport
+    st = _session.current_station
+    if st == Station.FIS:
+        return _flightplan.fis.freq_mhz if _flightplan is not None else None
+    if st == Station.CTAF:
+        return field_service_freq(ap) if ap is not None else None
+    tc = _STATION_FREQ_TYPE.get(st)
+    f = ap.freq(tc) if (ap is not None and tc) else None
+    return f.freq_mhz if f else None
+
+
 async def _fp_broadcast_service():
-    """Tell the UI which service is now working us (station, callsign, phase)."""
+    """Tell the UI which service is now working us (station, callsign, phase).
+    Also flips the airport panel to the field the session is now referenced to —
+    en route that's the destination, so the panel stops showing the field you
+    departed and starts showing where you're going (and the freqs you'll need)."""
+    global _current_airport
     if _session is None:
         return
+    ap = _session.current_airport
+    if ap is not None and (_current_airport is None or ap.icao != _current_airport.icao):
+        _current_airport = ap
+        await _broadcast("airport_detected", **_airport_dict(ap))
     await _broadcast(
         "phase_change",
         phase=_session.phase.value,
@@ -1460,7 +1512,8 @@ async def _fp_broadcast_service():
     if _flightplan is not None:
         await _broadcast("flightplan_stage", stage=_fp_stage,
                          station=_session.current_station.value,
-                         atc_callsign=_session._atc_callsign())
+                         atc_callsign=_session._atc_callsign(),
+                         expected_freq=_fp_expected_freq())
 
 
 async def _emit_controller_line(text: str, *, model: Optional[str] = None,

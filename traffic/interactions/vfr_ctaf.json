@@ -1,0 +1,102 @@
+{
+  "_comment": "Self-announce traffic for UNCONTROLLED aerodromes (CTAF/AFIS). There is no controller here — these are blind position calls other VFR aircraft make on the field frequency (addressed to '<field> Traffic'). One aircraft per interaction, pilot-only lines, no ATC reply. Rendered with {atc_callsign}='<field> Traffic', {callsign}, {runway}. Played while you're at or just departing an uncontrolled field in a flight plan.",
+  "interactions": [
+    {
+      "id": "ctaf_join_downwind",
+      "station": "ctaf",
+      "flight_rules": "VFR",
+      "lines": [
+        {"speaker": "pilot", "text": "{atc_callsign}, {callsign}, joining downwind runway {runway}."}
+      ]
+    },
+    {
+      "id": "ctaf_overhead_join",
+      "station": "ctaf",
+      "flight_rules": "VFR",
+      "lines": [
+        {"speaker": "pilot", "text": "{atc_callsign}, {callsign}, overhead the field two thousand feet, joining for runway {runway}."}
+      ]
+    },
+    {
+      "id": "ctaf_final_fullstop",
+      "station": "ctaf",
+      "flight_rules": "VFR",
+      "lines": [
+        {"speaker": "pilot", "text": "{atc_callsign}, {callsign}, final runway {runway}, full stop."}
+      ]
+    },
+    {
+      "id": "ctaf_lining_up",
+      "station": "ctaf",
+      "flight_rules": "VFR",
+      "lines": [
+        {"speaker": "pilot", "text": "{atc_callsign}, {callsign}, backtracking and lining up runway {runway} for departure."}
+      ]
+    },
+    {
+      "id": "ctaf_rolling",
+      "station": "ctaf",
+      "flight_rules": "VFR",
+      "lines": [
+        {"speaker": "pilot", "text": "{atc_callsign}, {callsign}, rolling runway {runway}, departing to the north."}
+      ]
+    },
+    {
+      "id": "ctaf_clear_active",
+      "station": "ctaf",
+      "flight_rules": "VFR",
+      "lines": [
+        {"speaker": "pilot", "text": "{atc_callsign}, {callsign}, clear of the active, taxiing to parking."}
+      ]
+    },
+    {
+      "id": "ctaf_downwind_then_final",
+      "station": "ctaf",
+      "flight_rules": "VFR",
+      "lines": [
+        {"speaker": "pilot", "text": "{atc_callsign}, {callsign}, late downwind runway {runway}, touch and go."},
+        {"speaker": "pilot", "text": "{atc_callsign}, {callsign}, short final runway {runway}, touch and go."}
+      ]
+    },
+    {
+      "id": "ctaf_inbound_from_point",
+      "station": "ctaf",
+      "flight_rules": "VFR",
+      "lines": [
+        {"speaker": "pilot", "text": "{atc_callsign}, {callsign}, five miles east, inbound, will join for runway {runway}."}
+      ]
+    },
+    {
+      "id": "ctaf_leaving_circuit",
+      "station": "ctaf",
+      "flight_rules": "VFR",
+      "lines": [
+        {"speaker": "pilot", "text": "{atc_callsign}, {callsign}, departing the circuit to the south, climbing, good day."}
+      ]
+    },
+    {
+      "id": "ctaf_glider_winch",
+      "station": "ctaf",
+      "flight_rules": "VFR",
+      "lines": [
+        {"speaker": "pilot", "text": "{atc_callsign}, {callsign}, glider winch launching in progress, cable up to two thousand feet."}
+      ]
+    },
+    {
+      "id": "ctaf_position_crosswind",
+      "station": "ctaf",
+      "flight_rules": "VFR",
+      "lines": [
+        {"speaker": "pilot", "text": "{atc_callsign}, {callsign}, crosswind runway {runway}, remaining in the circuit."}
+      ]
+    },
+    {
+      "id": "ctaf_vacating_backtrack",
+      "station": "ctaf",
+      "flight_rules": "VFR",
+      "lines": [
+        {"speaker": "pilot", "text": "{atc_callsign}, {callsign}, landed runway {runway}, backtracking to vacate."}
+      ]
+    }
+  ]
+}
