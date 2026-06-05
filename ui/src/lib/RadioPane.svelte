@@ -35,16 +35,25 @@
     if (ok) audioEnabled.set(true);
   }
 
-  // Spacebar PTT — only when focus is not in the text input
+  // True when focus is in any editable field — Space must type a space there,
+  // not key the mic (covers the radio TEXTAREA and every dialog INPUT, e.g. the
+  // flight-plan route box).
+  function _isEditable(el) {
+    if (!el) return false;
+    const tag = el.tagName;
+    return tag === 'TEXTAREA' || tag === 'INPUT' || tag === 'SELECT' || el.isContentEditable;
+  }
+
+  // Spacebar PTT — only when focus is not in an editable field.
   function onWindowKeydown(e) {
-    if (e.code === 'Space' && !e.repeat && e.target.tagName !== 'TEXTAREA') {
+    if (e.code === 'Space' && !e.repeat && !_isEditable(e.target)) {
       e.preventDefault();
       if ($audioEnabled) startPTT();
     }
   }
 
   function onWindowKeyup(e) {
-    if (e.code === 'Space' && $audioEnabled && e.target.tagName !== 'TEXTAREA') stopPTT();
+    if (e.code === 'Space' && $audioEnabled && !_isEditable(e.target)) stopPTT();
   }
 
   // Auto-scroll to bottom on new messages
