@@ -13,6 +13,11 @@ export const flightState = writable(null);
 // Airport
 export const airport = writable(null);
 export const activeRunway = writable(null);
+
+// Journey endpoints — departure + arrival fields and the en-route FIS, so the
+// right-hand panel can switch its frequency view between the three legs.
+// {departure:{airport}|null, arrival:{airport}|null, fis:{callsign,freq_mhz}|null}
+export const journey = writable(null);
 export const atcCallsign = writable('Ground');
 export const boundaryNotes = writable('');
 

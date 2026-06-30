@@ -1,132 +1,107 @@
 <script>
-  import { airport, activeRunway, com1Mhz, com2Mhz, scenarioDrawerOpen,
-           xplaneConnected, vfrWeather, flightplan, flightplanStage } from './store.js';
+  import { airport, journey, com1Mhz, scenarioDrawerOpen, xplaneConnected,
+           vfrWeather, flightplanStage, phase, onGround } from './store.js';
   import { sendMessage, setVfrWeather } from './ws.js';
+  import FrequencyList from './FrequencyList.svelte';
 
-  // Flight-plan services — the valid frequencies for the whole journey, with the
-  // leg that's working you right now highlighted as the service "switches" from
-  // the departure field to the en-route FIS to the arrival field.
-  const STAGE_LABEL = { departure: 'DEP', enroute: 'FIS', arrival: 'ARR' };
-  $: fpServices = $flightplan?.services ?? [];
-  function stageActive(stage) {
-    const s = $flightplanStage;
-    if (!s) return false;
-    if (s === 'arrival_ground') return stage === 'arrival';
-    return s === stage;
+  // The right-hand panel switches its frequency view between the legs of a
+  // journey — Departure field, en-route FIS, and (when a destination is known)
+  // the Arrival field. A flight plan, a scenario, or a free simulated flight all
+  // populate `journey`; without a departure at all it falls back to the single
+  // detected airport.
+  $: j = $journey;
+  $: hasJourney = !!(j && j.departure);
+
+  // Segments depend on what's known: DEP and FIS always, ARR only with a filed
+  // or scenario destination.
+  $: SEGMENTS = [
+    { view: 'departure', code: 'DEP', sub: j?.departure?.icao ?? '—' },
+    { view: 'enroute',   code: 'FIS', sub: 'FIS' },
+    ...(j?.arrival ? [{ view: 'arrival', code: 'ARR', sub: j.arrival.icao }] : []),
+  ];
+
+  // Which leg are we actually flying? flightplanStage is authoritative when a
+  // plan is loaded; otherwise derive it from the session phase, and — for a free
+  // flight where the phase never advances — treat simply being airborne as the
+  // en-route leg so the marker tracks reality.
+  const ARRIVAL_PHASES = ['approach', 'circuit', 'ground_arrival', 'parked'];
+  const ENROUTE_PHASES = ['departing', 'en_route', 'en_route_fis'];
+  function legFromStage(s) {
+    if (s === 'departure') return 'departure';
+    if (s === 'enroute') return 'enroute';
+    if (s === 'arrival' || s === 'arrival_ground') return 'arrival';
+    return null;
   }
-  function isCom1Freq(f) { return f && Math.abs(f - $com1Mhz) < 0.005; }
+  $: activeLeg = legFromStage($flightplanStage)
+    ?? (ARRIVAL_PHASES.includes($phase) ? 'arrival'
+        : (ENROUTE_PHASES.includes($phase) || !$onGround) ? 'enroute'
+        : 'departure');
 
-  const freqTypeOrder = [53, 54, 50, 52, 55, 56, 51];  // GND, TWR, ATIS, CLD, APP, DEP, CTAF
-  const freqTypeShort = {
-    50: 'ATIS', 51: 'CTAF', 52: 'CLD', 53: 'GND',
-    54: 'TWR',  55: 'APP',  56: 'DEP',
-  };
-
-  $: ap = $airport;
-  $: sortedFreqs = ap ? [...ap.frequencies].sort((a, b) => {
-    const ia = freqTypeOrder.indexOf(a.type_code);
-    const ib = freqTypeOrder.indexOf(b.type_code);
-    return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
-  }) : [];
-
-  function isCom1(freqMhz) { return Math.abs(freqMhz - $com1Mhz) < 0.005; }
-  function isCom2(freqMhz) { return Math.abs(freqMhz - $com2Mhz) < 0.005; }
-
-  function isActive(rwy) {
-    if (!$activeRunway) return false;
-    return rwy.name1 === $activeRunway || rwy.name2 === $activeRunway;
+  // selectedView auto-follows the leg you're flying, but a manual pick sticks
+  // until the active leg actually changes (then it re-syncs).
+  let selectedView = 'departure';
+  let _lastActiveLeg = null;
+  $: if (hasJourney && activeLeg !== _lastActiveLeg) {
+    _lastActiveLeg = activeLeg;
+    selectedView = activeLeg;
   }
 
-  function tuneCom1(freqMhz) { sendMessage('tune_com1', { freq_mhz: freqMhz }); }
-  function tuneCom2(e, freqMhz) {
-    e.preventDefault();
-    sendMessage('tune_com2', { freq_mhz: freqMhz });
-  }
+  $: fis = j?.fis ?? null;
+  // Match at the radio's real 10 kHz resolution (see FrequencyList).
+  function isCom1(freqMhz) { return !!freqMhz && Math.round(freqMhz * 100) === Math.round($com1Mhz * 100); }
+  function tuneCom1(freqMhz) { if (freqMhz) sendMessage('tune_com1', { freq_mhz: freqMhz }); }
 </script>
 
 <aside class="airport-panel">
-  {#if fpServices.length}
-    <!-- Flight-plan services — the active leg is highlighted; click to tune COM1 -->
-    <section class="fp-services">
-      <div class="section-label">FLIGHT PLAN</div>
-      {#each fpServices as svc}
-        <button class="fp-row" class:active={stageActive(svc.stage)}
-                disabled={!svc.freq_mhz}
-                onclick={() => svc.freq_mhz && tuneCom1(svc.freq_mhz)}
-                title={svc.freq_mhz ? 'Tune COM1' : 'No published frequency'}>
-          <span class="fp-stage">{STAGE_LABEL[svc.stage] ?? svc.stage}</span>
-          <span class="fp-name">{svc.label}</span>
-          <span class="fp-freq" class:com1={isCom1Freq(svc.freq_mhz)}>
-            {svc.freq_mhz ? svc.freq_mhz.toFixed(3) : '—'}
-          </span>
+  {#if hasJourney}
+    <!-- Leg selector — DEP · FIS · ARR. The leg you're flying is marked; click any
+         to read its frequencies. -->
+    <div class="seg-row">
+      {#each SEGMENTS as s}
+        <button class="seg" class:selected={selectedView === s.view}
+                class:active={activeLeg === s.view}
+                onclick={() => selectedView = s.view}>
+          {#if activeLeg === s.view}<span class="seg-dot"></span>{/if}
+          <span class="seg-code">{s.code}</span>
+          <span class="seg-sub">{s.sub}</span>
         </button>
       {/each}
-    </section>
-    <div class="divider"></div>
-  {/if}
-
-  {#if ap}
-    <!-- Airport identity -->
-    <section class="identity">
-      <div class="icao">{ap.icao}</div>
-      <div class="name">{ap.name}</div>
-      <div class="elev muted">Elev {ap.elevation_ft} ft</div>
-    </section>
+    </div>
 
     <div class="divider"></div>
 
-    <!-- Runways -->
-    <section>
-      <div class="section-label">RUNWAYS</div>
-      {#each ap.runways as rwy}
-        <div class="runway-row" class:active-rwy={isActive(rwy)}>
-          {#if isActive(rwy)}<span class="rwy-arrow">▶</span>{:else}<span class="rwy-arrow dim"> </span>{/if}
-          <span class="rwy-name">{rwy.name1}<span class="dim">/</span>{rwy.name2}</span>
-          <span class="rwy-width muted">{rwy.width_m}m</span>
+    {#if selectedView === 'enroute'}
+      <!-- FIS leg has no airport record — just a regional information service. -->
+      <section class="identity">
+        <div class="icao">FIS</div>
+        <div class="name">{fis?.callsign ?? 'Information'}</div>
+        <div class="elev muted">En-route flight information service</div>
+      </section>
+      <div class="divider"></div>
+      <section class="freq-section">
+        <div class="section-label-row">
+          <span class="section-label">FREQUENCY</span>
+          <span class="freq-hint">L·COM1</span>
         </div>
-      {/each}
-    </section>
-
-    <div class="divider"></div>
-
-    <!-- Frequencies -->
-    <section class="freq-section">
-      <div class="section-label-row">
-        <span class="section-label">FREQUENCIES</span>
-        <span class="freq-hint">L·COM1 R·COM2</span>
-      </div>
-      {#each sortedFreqs as f}
         <div class="freq-row">
-          <span class="freq-type">{freqTypeShort[f.type_code] ?? f.type_name}</span>
-          <button
-            class="freq-mhz"
-            class:com1={isCom1(f.freq_mhz)}
-            class:com2={isCom2(f.freq_mhz)}
-            onclick={() => tuneCom1(f.freq_mhz)}
-            oncontextmenu={(e) => tuneCom2(e, f.freq_mhz)}
-            title="Left-click: COM1 · Right-click: COM2"
-          >
-            {f.freq_mhz.toFixed(3)}
+          <span class="freq-type">FIS</span>
+          <button class="freq-mhz" class:com1={isCom1(fis?.freq_mhz)}
+                  disabled={!fis?.freq_mhz}
+                  onclick={() => tuneCom1(fis?.freq_mhz)}
+                  title={fis?.freq_mhz ? 'Tune COM1' : 'No published frequency'}>
+            {fis?.freq_mhz ? fis.freq_mhz.toFixed(3) : '—'}
           </button>
         </div>
-      {/each}
-      {#if !sortedFreqs.some(f => Math.abs(f.freq_mhz - 122.800) < 0.005)}
-        <div class="freq-row unicom-row">
-          <span class="freq-type unicom-label">UNICOM</span>
-          <button
-            class="freq-mhz"
-            class:com1={isCom1(122.800)}
-            class:com2={isCom2(122.800)}
-            onclick={() => tuneCom1(122.800)}
-            oncontextmenu={(e) => tuneCom2(e, 122.800)}
-            title="Left-click: COM1 · Right-click: COM2"
-          >
-            122.800
-          </button>
-        </div>
-      {/if}
-    </section>
+      </section>
+    {:else if selectedView === 'arrival' && j.arrival}
+      <FrequencyList airport={j.arrival} />
+    {:else}
+      <FrequencyList airport={j.departure} />
+    {/if}
 
+  {:else if $airport}
+    <!-- No journey staged — the single detected field. -->
+    <FrequencyList airport={$airport} />
   {:else}
     <div class="no-airport">
       <div class="no-airport-icon gi">✈</div>
@@ -163,111 +138,84 @@
     padding: 12px;
   }
 
+  .muted { color: var(--text-muted); }
+  .divider { height: 1px; background: var(--border); margin: 10px 0; }
+
+  /* Leg selector */
+  .seg-row { display: flex; gap: 4px; }
+  .seg {
+    position: relative;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1px;
+    padding: 6px 2px 5px;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text-muted);
+    transition: border-color 0.12s, background 0.12s, color 0.12s;
+  }
+  .seg:hover { border-color: var(--border-bright); color: var(--text); }
+  .seg.selected {
+    background: var(--bg-panel-alt);
+    border-color: var(--border-bright);
+    color: var(--text);
+  }
+  .seg-code { font-size: 11px; font-weight: 700; letter-spacing: 0.08em; }
+  .seg-sub  { font-size: 9px; color: var(--text-dim); letter-spacing: 0.02em; }
+  .seg.selected .seg-sub { color: var(--text-muted); }
+  .seg.active .seg-code { color: var(--accent-green); }
+  .seg-dot {
+    position: absolute;
+    top: 4px; right: 4px;
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: var(--accent-green);
+  }
+
+  /* FIS detail block (mirrors FrequencyList's identity/freq styling) */
   .identity { padding: 4px 0 8px; }
   .icao { font-size: 28px; font-weight: 700; letter-spacing: 0.06em; line-height: 1.1; }
   .name { font-size: 13px; color: var(--text-muted); padding-top: 2px; }
   .elev { font-size: 11px; padding-top: 2px; }
-  .muted { color: var(--text-muted); }
-  .dim   { color: var(--text-dim); }
-
-  .divider { height: 1px; background: var(--border); margin: 10px 0; }
-
-  .section-label {
-    font-size: 10px; font-weight: 700;
-    letter-spacing: 0.1em; color: var(--text-dim);
-    padding-bottom: 6px;
-  }
-
-  .runway-row {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 3px 0;
-    font-size: 12px;
-  }
-  .rwy-arrow { color: var(--accent-green); font-size: 10px; width: 10px; flex-shrink: 0; }
-  .rwy-name  { font-weight: 600; }
-  .rwy-width { font-size: 10px; margin-left: auto; }
-  .active-rwy .rwy-name { color: var(--accent-green); }
-
-  /* Flight-plan service ladder */
-  .fp-services { display: flex; flex-direction: column; gap: 4px; }
-  .fp-row {
-    display: flex;
-    align-items: baseline;
-    gap: 8px;
-    width: 100%;
-    padding: 5px 6px;
-    background: var(--bg-input);
-    border: 1px solid var(--border);
-    border-left: 2px solid transparent;
-    border-radius: var(--radius);
-    text-align: left;
-    transition: border-color 0.12s, background 0.12s;
-  }
-  .fp-row:not(:disabled):hover { border-color: var(--border-bright); }
-  .fp-row:disabled { opacity: 0.55; cursor: default; }
-  .fp-row.active {
-    border-left-color: var(--accent-green);
-    background: rgba(63, 185, 80, 0.08);
-  }
-  .fp-stage {
-    font-size: 9px; font-weight: 700; letter-spacing: 0.08em;
-    color: var(--text-dim); width: 26px; flex-shrink: 0;
-  }
-  .fp-row.active .fp-stage { color: var(--accent-green); }
-  .fp-name {
-    font-size: 12px; color: var(--text-muted);
-    flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  }
-  .fp-row.active .fp-name { color: var(--text); }
-  .fp-freq { font-size: 13px; color: var(--text-muted); flex-shrink: 0; }
-  .fp-freq.com1 { color: var(--accent-green); font-weight: 600; }
 
   .freq-section { display: flex; flex-direction: column; gap: 4px; }
-
   .section-label-row {
     display: flex;
     justify-content: space-between;
     align-items: baseline;
     padding-bottom: 6px;
   }
-  .section-label-row .section-label { padding-bottom: 0; }
-  .freq-hint {
-    font-size: 9px;
-    color: var(--text-dim);
-    letter-spacing: 0.04em;
+  .section-label {
+    font-size: 10px; font-weight: 700;
+    letter-spacing: 0.1em; color: var(--text-dim);
   }
-
+  .freq-hint { font-size: 9px; color: var(--text-dim); letter-spacing: 0.04em; }
   .freq-row {
     display: flex;
     justify-content: space-between;
     align-items: center;
     padding: 3px 0;
   }
-
   .freq-type {
     font-size: 13px; font-weight: 700;
     letter-spacing: 0.04em; color: var(--text-muted);
     width: 44px; flex-shrink: 0;
   }
-
   .freq-mhz {
     color: var(--text-muted);
     font-size: 15px;
-    display: flex; align-items: center; gap: 4px;
     background: none;
     padding: 2px 4px;
     border-radius: var(--radius);
     transition: background 0.1s, color 0.1s;
     cursor: pointer;
   }
-  .freq-mhz:hover  { background: var(--bg-panel-alt); color: var(--text); }
+  .freq-mhz:not(:disabled):hover { background: var(--bg-panel-alt); color: var(--text); }
+  .freq-mhz:disabled { opacity: 0.55; cursor: default; }
   .freq-mhz.com1 { color: var(--accent-green); font-weight: 600; }
-  .freq-mhz.com2 { color: var(--accent-amber); font-weight: 600; }
-
-  .unicom-row { margin-top: 6px; border-top: 1px solid var(--border); padding-top: 6px; }
-  .unicom-label { color: var(--text-dim); }
 
   .no-airport {
     flex: 1;

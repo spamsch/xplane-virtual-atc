@@ -9,6 +9,7 @@ import {
   messages, phase, station, thinking, loading, loadingLabel,
   configStatus, pttActive, transcription, audioEnabled, vfrWeather,
   ambientLevel, flightplan, flightplanStage, flightplanFreq, liveatcStatus,
+  journey,
 } from './store.js';
 import { playMicClick } from './sound.js';
 
@@ -219,6 +220,12 @@ function dispatch(msg) {
       airport.set(msg);
       break;
 
+    case 'journey': {
+      const { type, ...j } = msg;
+      journey.set(j);
+      break;
+    }
+
     case 'phase_change':
       phase.set(msg.phase);
       station.set(msg.station);
@@ -313,6 +320,7 @@ function dispatch(msg) {
       activeRunway.set(null);
       boundaryNotes.set('');
       airport.set(null);
+      journey.set(null);
       break;
 
     case 'error':

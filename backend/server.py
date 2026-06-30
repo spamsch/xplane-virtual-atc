@@ -10,6 +10,9 @@ Server → client event types:
   state_update     lat, lon, alt_ind_ft, ias_kts, gs_kts, heading_mag,
                    on_ground, com1_mhz, com2_mhz, transponder, acf_icao, tail_number
   airport_detected icao, name, elevation_ft, runways[], frequencies[]
+  journey          departure{airport}, arrival{airport}, fis{callsign,freq_mhz} —
+                   the two endpoint fields + en-route FIS; lets the UI switch the
+                   frequency panel between Departure / FIS / Arrival
   atc_message      role ("pilot"|"atc"), text, model, timestamp
   atc_audio        audio (base64 WAV), text, model, timestamp  [if AUDIO_ENABLED]
   ambient_audio    audio (base64 WAV), speaker ("pilot"|"atc"), text, callsign,
@@ -93,7 +96,9 @@ from traffic import liveatc as _liveatc_mod
 from airspace.database import AirspaceDB, Airspace
 from airspace import openaip as airspace_openaip
 from navigation.navaids import NavaidDB, parse_nav_data
-from flightplan.plan import FlightPlan, parse_route, RouteError, field_service_freq
+from flightplan.plan import (
+    FlightPlan, parse_route, RouteError, field_service_freq, fis_station_for,
+)
 from xplane.connector import FlightState
 from xplane.rest_connector import XPlaneRestConnector, encode_fixed_string
 from xplane.ptt_listener import PTTListener
@@ -264,6 +269,39 @@ def _airport_dict(ap: Airport) -> dict:
              "freq_mhz": f.freq_mhz, "name": f.name}
             for f in ap.frequencies
         ],
+    }
+
+
+def _journey_dict() -> dict:
+    """The departure field, the en-route FIS, and (when known) the arrival field,
+    so the UI can switch the frequency panel between Departure / FIS / Arrival.
+    Works for a filed flight plan, a scenario, and a free simulated flight alike:
+    the arrival is optional, and the FIS leg comes from the plan when present,
+    else from the regional service for the current position."""
+    dep = _session.departure if _session else None
+    arr = _session.destination if _session else None
+    fis = None
+    if _flightplan is not None:
+        fis = {"callsign": _flightplan.fis.callsign,
+               "freq_mhz": _flightplan.fis.freq_mhz}
+    else:
+        # Position-based regional FIS — works without a filed destination. Prefer
+        # the live position, then the route midpoint, then the departure field.
+        ref = _driver.state if _driver else None
+        if ref is not None and ref.is_flight_loaded:
+            st = fis_station_for(ref.lat, ref.lon)
+        elif dep is not None and arr is not None:
+            st = fis_station_for((dep.lat + arr.lat) / 2, (dep.lon + arr.lon) / 2)
+        elif dep is not None:
+            st = fis_station_for(dep.lat, dep.lon)
+        else:
+            st = None
+        if st is not None:
+            fis = {"callsign": st.callsign, "freq_mhz": st.freq_mhz}
+    return {
+        "departure": _airport_dict(dep) if dep else None,
+        "arrival":   _airport_dict(arr) if arr else None,
+        "fis":       fis,
     }
 
 
@@ -748,6 +786,8 @@ async def _send_current_state(ws: WebSocketServerProtocol):
         await _send_to(ws, "state_update", **_state_dict(_driver.state))
     if _current_airport:
         await _send_to(ws, "airport_detected", **_airport_dict(_current_airport))
+    if _session is not None:
+        await _send_to(ws, "journey", **_journey_dict())
     if _flightplan is not None:
         await _send_to(ws, "flightplan_loaded", **_flightplan_dict(_flightplan))
         if _session is not None:
@@ -994,17 +1034,47 @@ async def _load_scenario(data: dict):
     await _broadcast("source_change", source="simulated", scenario_name=scenario.name)
     await _broadcast("state_update", **_state_dict(sim.state))
 
-    # Find departure airport
+    # Find departure airport — prefer the named ICAO, fall back to nearest.
     departure = None
-    if _airport_db:
-        departure = _airport_db.nearest(scenario.lat, scenario.lon)
-        if not departure and scenario.departure_airport:
+    if await _ensure_airport_db():
+        if scenario.departure_airport:
             departure = _airport_db.get(scenario.departure_airport)
+        if not departure:
+            departure = _airport_db.nearest(scenario.lat, scenario.lon)
 
-    if departure:
+    # Snap an on-ground aircraft with no explicit position to the departure field
+    # centroid, so staging geometry (distance flown / to run) is meaningful.
+    if departure and scenario.on_ground and not (scenario.lat or scenario.lon):
+        sim.set_position(lat=departure.lat, lon=departure.lon,
+                         alt_ft=departure.elevation_ft, on_ground=True)
+        await _broadcast("state_update", **_state_dict(sim.state))
+
+    # Stage a flight plan when the scenario names a destination or a route, so the
+    # journey advances departure → en-route FIS → arrival with the full staging
+    # machinery (handoffs, FIS director, the DEP/FIS/ARR panel).
+    route_str = (data.get("route") or "").strip()
+    if not route_str and scenario.destination_airport and scenario.departure_airport:
+        route_str = f"{scenario.departure_airport} {scenario.destination_airport}"
+    staged = False
+    if route_str and _airport_db is not None:
+        navaid_db = await _ensure_navaid_db()
+        try:
+            fp = parse_route(route_str, _airport_db, navaid_db, {})
+        except RouteError as e:
+            log.warning(f"Scenario route '{route_str}' invalid: {e}")
+        else:
+            _flightplan = fp
+            _fp_stage = "departure"
+            await _broadcast("flightplan_loaded", **_flightplan_dict(fp))
+            await _set_airport(fp.departure.airport, scenario)
+            await _fp_broadcast_service()
+            staged = True
+
+    if not staged and departure:
         await _set_airport(departure, scenario)
 
-    log.info(f"Loaded scenario: {scenario.name}")
+    log.info(f"Loaded scenario: {scenario.name}"
+             + (f" with route {route_str}" if staged else ""))
 
 
 async def _new_flight():
@@ -1513,6 +1583,14 @@ async def _set_airport_inner(airport: Airport, scenario: Optional[Scenario] = No
                      active_runway=active_runway,
                      notes=notes)
 
+    # Hand the UI both endpoint fields + the en-route FIS so the right-hand panel
+    # can switch its frequency view between Departure / FIS / Arrival.
+    await _broadcast("journey", **_journey_dict())
+
+    # In simulated mode, open already on the frequency of the service now working
+    # us, so the radio and the airport panel agree from the start.
+    await _autotune_com1_opening()
+
 
 # ------------------------------------------------------------------ #
 # Background loops
@@ -1820,6 +1898,20 @@ def _fp_expected_freq() -> Optional[float]:
     tc = _STATION_FREQ_TYPE.get(st)
     f = ap.freq(tc) if (ap is not None and tc) else None
     return f.freq_mhz if f else None
+
+
+async def _autotune_com1_opening():
+    """In simulated mode, tune COM1 to the service now working us when the radio
+    is still unset — so a freshly loaded flight opens already on frequency and the
+    airport panel highlights it. Never stomps a frequency the pilot already
+    dialled, and never touches a live X-Plane radio (the pilot owns that one)."""
+    if _source == "xplane" or not isinstance(_driver, ScenarioSimulator):
+        return
+    if _driver.state.com1_mhz >= 100:   # already tuned to a real frequency
+        return
+    freq = _fp_expected_freq()
+    if freq:
+        await _tune_com1(freq)
 
 
 async def _fp_broadcast_service():

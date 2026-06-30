@@ -267,6 +267,10 @@ class ATCSession:
             else Station.GND
         )
         self.current_airport = departure
+        # En-route FIS callsign when there's no filed flight plan (scenario / free
+        # flight) — set by the orchestrator from the regional service. With a plan,
+        # the plan's FIS name wins.
+        self._fis_callsign: Optional[str] = None
 
         self.squawk: Optional[str] = None
         self.squawk_history: list[str] = []
@@ -514,9 +518,13 @@ class ATCSession:
 
     def _atc_callsign(self) -> str:
         # En-route FIS is a regional service, not the field's — name it from the
-        # flight plan (e.g. "Bremen Information").
-        if self.current_station == Station.FIS and self.flight_plan is not None:
-            return self.flight_plan.fis.callsign
+        # flight plan (e.g. "Bremen Information"), or from the orchestrator-set
+        # regional callsign when there's no plan.
+        if self.current_station == Station.FIS:
+            if self.flight_plan is not None:
+                return self.flight_plan.fis.callsign
+            if self._fis_callsign:
+                return self._fis_callsign
         city = self.current_airport.name.split()[0]
         if self.current_station == Station.CTAF:
             # AFIS fields answer as "<field> Information"; a field with no
@@ -553,13 +561,17 @@ class ATCSession:
         if self.phase not in (Phase.GROUND_ARRIVAL, Phase.PARKED):
             self.phase = Phase.APPROACH
 
-    def enter_enroute_fis(self, context_airport: Optional[Airport] = None) -> None:
+    def enter_enroute_fis(self, context_airport: Optional[Airport] = None,
+                          fis_callsign: Optional[str] = None) -> None:
         """Hand the flight to the en-route FIS. context_airport (usually the
         destination) gives the engine a frequency list for the eventual handoff.
+        fis_callsign names the regional service when there's no filed plan.
         Called by the orchestrator once airborne and clear of the departure field,
         so it advances to the en-route FIS phase outright."""
         if context_airport is not None:
             self.current_airport = context_airport
+        if fis_callsign:
+            self._fis_callsign = fis_callsign
         self.current_station = Station.FIS
         if self.phase not in (Phase.APPROACH, Phase.CIRCUIT,
                               Phase.GROUND_ARRIVAL, Phase.PARKED):

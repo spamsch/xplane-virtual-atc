@@ -5,12 +5,14 @@
   // Built-in presets
   const PRESETS = [
     {
-      name: 'EDDV — Standard Departure',
+      name: 'EDDV → EDDG — VFR Journey',
       data: {
         name: 'EDDV Standard Departure',
-        description: 'C172 D-EIYD on the GA apron at Hannover. Wind 270/8, QNH 1018, ATIS Charlie.',
+        description: 'C172 D-EIYD on the GA apron at Hannover, routing to Münster/Osnabrück. Wind 270/8, QNH 1018, ATIS Charlie.',
         aircraft: { icao: 'C172', callsign: 'D-EIYD' },
         departure_airport: 'EDDV',
+        destination_airport: 'EDDG',
+        route: 'EDDV OSN EDDG',
         conditions: { qnh: 1018, wind_dir: 270, wind_kts: 8, visibility_km: 10, atis: 'Charlie' },
         position: { lat: 52.4608, lon: 9.6900, alt_ft: 183, heading: 270, on_ground: true },
       }
@@ -32,6 +34,8 @@
   let aircraftIcao = $state('C172');
   let callsign     = $state('D-EIYD');
   let depAirport   = $state('EDDV');
+  let destAirport  = $state('EDDG');
+  let route        = $state('EDDV OSN EDDG');
   let qnh          = $state(1018);
   let windDir      = $state(270);
   let windKts      = $state(8);
@@ -44,6 +48,8 @@
     aircraftIcao = d.aircraft.icao;
     callsign     = d.aircraft.callsign;
     depAirport   = d.departure_airport;
+    destAirport  = d.destination_airport ?? '';
+    route        = d.route ?? '';
     qnh          = d.conditions.qnh;
     windDir      = d.conditions.wind_dir;
     windKts      = d.conditions.wind_kts;
@@ -55,15 +61,23 @@
   function buildScenario() {
     // Position: if a known airport, backend will snap to centroid.
     // We pass 0,0 and the backend uses departure_airport ICAO for lookup.
-    return {
-      name: `${depAirport} — Custom`,
-      description: `${aircraftIcao} ${callsign} at ${depAirport}`,
+    const dep  = depAirport.trim().toUpperCase();
+    const dest = destAirport.trim().toUpperCase();
+    // A route wins if given; otherwise a destination alone implies a direct leg.
+    const rte  = route.trim().toUpperCase() || (dest ? `${dep} ${dest}` : '');
+    const scn = {
+      name: dest ? `${dep} → ${dest}` : `${dep} — Custom`,
+      description: dest ? `${aircraftIcao} ${callsign}, ${dep} to ${dest}`
+                        : `${aircraftIcao} ${callsign} at ${dep}`,
       aircraft: { icao: aircraftIcao, callsign },
-      departure_airport: depAirport,
+      departure_airport: dep,
       conditions: { qnh: Number(qnh), wind_dir: Number(windDir), wind_kts: Number(windKts),
                     visibility_km: Number(vis), atis },
       position: { lat: 0, lon: 0, alt_ft: 0, heading: Number(windDir) > 180 ? Number(windDir) - 180 : Number(windDir) + 180, on_ground: onGround },
     };
+    if (dest) scn.destination_airport = dest;
+    if (rte)  scn.route = rte;
+    return scn;
   }
 
   function load() {
@@ -125,10 +139,14 @@
   </div>
 
   <div class="section">
-    <div class="section-label">AIRPORT</div>
+    <div class="section-label">ROUTE</div>
+    <div class="field-row">
+      <label>Departure ICAO<input type="text" bind:value={depAirport} maxlength="4" placeholder="EDDV" /></label>
+      <label>Destination ICAO<input type="text" bind:value={destAirport} maxlength="4" placeholder="EDDG" /></label>
+    </div>
     <label class="field-full">
-      Departure ICAO
-      <input type="text" bind:value={depAirport} maxlength="4" placeholder="EDDV" />
+      Route <span class="hint">(optional — via navaids/fixes)</span>
+      <input type="text" bind:value={route} placeholder="EDDV OSN EDDG" />
     </label>
   </div>
 
@@ -243,6 +261,7 @@
   .preset-btn:hover { border-color: var(--accent-blue); color: var(--text); }
 
   label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: var(--text-muted); }
+  .hint { color: var(--text-dim); font-size: 10px; }
   input[type="text"], input[type="number"] { padding: 5px 8px; width: 100%; }
   .select-field {
     background: var(--bg-input); color: var(--text);
