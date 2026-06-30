@@ -24,10 +24,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import config
-from xplane.sim_control import _resolve, _get, _patch  # proven REST helpers
+from xplane.sim_control import _resolve, _get, _patch, apply_vfr_day  # proven REST helpers
 
 KTS_TO_MS = 0.514444
 FT_TO_M = 0.3048
+
+MODE_REAL = 7  # download + track real weather (overwrites manual edits each regen)
 
 # Region datarefs we touch. All region arrays hold 3 layers (low/mid/high).
 NAMES = {
@@ -176,6 +178,35 @@ def set_rain(base: str, ids: dict):
     print(f"  → rain {pct:.0f}%\n")
 
 
+def use_real_weather(base: str, ids: dict):
+    """Hand the region back to X-Plane's live real-weather engine.
+
+    This leaves STATIC mode: X-Plane downloads current real weather and keeps
+    tracking it, so any manual edits get overwritten on the next regen cycle.
+    """
+    _patch(base, ids["mode"], MODE_REAL)
+    print("  → region weather set to REAL (live download, tracks real conditions).")
+    print("    Manual edits won't stick until you switch back to a static option.\n")
+
+
+def apply_vfr_clean(base: str, ids: dict):
+    """Freeze real wind/temperature/pressure, then force a clean VFR sky.
+
+    Reuses the backend's apply_vfr_day(): downloads real weather, freezes it
+    (so wind/temp/pressure stay real), then overrides rain=0, visibility, and a
+    scattered cumulus deck. After it runs the region is back in STATIC mode.
+    """
+    print("  Downloading real weather, freezing wind/temp/pressure, "
+          "then setting rain=0, vis=20 sm, scattered clouds …")
+    summary = apply_vfr_day(
+        config.XPLANE_IP, config.XPLANE_REST_PORT,
+        scattered=COVERAGE["scattered"], min_vis_sm=20.0,
+    )
+    print(f"  → clouds {summary['clouds']}, visibility {summary['visibility_sm']} sm, "
+          f"rain {summary['rain']}, {summary['time']}")
+    print(f"    preserved: {summary['preserved']}\n")
+
+
 MENU = """\
   X-Plane weather editor — region is in STATIC mode (edits persist)
   ------------------------------------------------------------------
@@ -183,6 +214,8 @@ MENU = """\
     w  wind
     v  visibility
     r  rain
+    l  use real weather (live, tracks real conditions)
+    f  VFR clean (real wind/temp/pressure, rain=0, vis=20, scattered)
     s  show current
     q  quit
 """
@@ -206,6 +239,8 @@ def main():
         "w": set_wind,
         "v": set_visibility,
         "r": set_rain,
+        "l": use_real_weather,
+        "f": apply_vfr_clean,
         "s": show_current,
     }
     while True:
