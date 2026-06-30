@@ -8,6 +8,7 @@
   import ScenarioDrawer from '$lib/ScenarioDrawer.svelte';
   import ConfigView from '$lib/ConfigView.svelte';
   import FlightPlanDialog from '$lib/FlightPlanDialog.svelte';
+  import SimControls from '$lib/SimControls.svelte';
   import { scenarioDrawerOpen, wsStatus, xplaneConnected, airport, loading, loadingLabel,
            configStatus, settingsOpen, flightplanOpen, flightplan, flightplanFreq,
            atcCallsign, com1Mhz } from '$lib/store.js';
@@ -76,6 +77,10 @@
         for <strong>{$atcCallsign}</strong> — your radio is on {($com1Mhz ?? 0).toFixed(3)}.</span>
       <button class="freq-tune-btn" onclick={tuneToService}>Tune COM1</button>
     </div>
+  {/if}
+
+  {#if !offline}
+    <SimControls />
   {/if}
 
   <div class="workspace" class:dimmed={offline || $loading}>

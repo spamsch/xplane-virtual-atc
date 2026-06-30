@@ -126,12 +126,65 @@ class ScenarioSimulator:
         st.ias_kts = 0.0
         st.groundspeed_ms = 0.0
         st.paused = 0.0
+        # Seed weather from the scenario so the UI's aircraft panel and the
+        # party-line render the same QNH/wind the ATC session was built with.
+        cond = s.conditions or {}
+        qnh = cond.get("qnh")
+        st.qnh_inhg = float(qnh) / 33.8639 if qnh else 0.0
+        st.wind_dir_deg = float(cond.get("wind_dir", 0) or 0)
+        st.wind_speed_kts = float(cond.get("wind_kts", 0) or 0)
         # Encode ICAO chars
         icao = s.aircraft_icao.ljust(4)[:4]
         st._icao_chars = [float(ord(c)) for c in icao]
         # Encode tail number
         tail = s.callsign.ljust(10)[:10]
         st._tail_chars = [float(ord(c)) for c in tail]
+
+    # ── Live mutation — the simulator stands in for X-Plane while debugging ──
+    #
+    # X-Plane feeds position/radio over UDP; here the backend drives the same
+    # FlightState directly. Moving the aircraft or tuning a radio mutates the
+    # one state the rest of the system already polls, so flight-plan progression,
+    # airport adoption, handoff gating and the party-line all behave as if a real
+    # sim were connected.
+
+    def set_position(self, *, lat: Optional[float] = None, lon: Optional[float] = None,
+                     alt_ft: Optional[float] = None, heading: Optional[float] = None,
+                     on_ground: Optional[bool] = None, gs_kts: Optional[float] = None,
+                     ias_kts: Optional[float] = None) -> None:
+        """Set any subset of the aircraft's position/attitude. Unspecified fields
+        are left where they are, so a caller can nudge one axis at a time."""
+        st = self._state
+        if lat is not None:
+            st.lat = float(lat)
+        if lon is not None:
+            st.lon = float(lon)
+        if alt_ft is not None:
+            st.alt_ind_ft = float(alt_ft)
+            st.elevation_m = float(alt_ft) * 0.3048
+        if heading is not None:
+            st.heading_mag = float(heading) % 360.0
+            st.heading_true = st.heading_mag
+        if on_ground is not None:
+            st.on_ground = 1.0 if on_ground else 0.0
+        if gs_kts is not None:
+            st.groundspeed_ms = float(gs_kts) / 1.94384
+            if ias_kts is None:
+                st.ias_kts = float(gs_kts)   # rough IAS≈GS for the debug harness
+        if ias_kts is not None:
+            st.ias_kts = float(ias_kts)
+
+    def tune(self, com: int, freq_mhz: float) -> None:
+        """Set COM1 (com=1) or COM2 (com=2) in the same 10 kHz raw units X-Plane
+        reports, so FlightState.comN_mhz reads back the tuned frequency."""
+        raw = float(round(freq_mhz * 100))
+        if com == 2:
+            self._state.com2_raw = raw
+        else:
+            self._state.com1_raw = raw
+
+    def set_transponder(self, code: int) -> None:
+        self._state.transponder = float(int(code))
 
     @property
     def state(self) -> FlightState:

@@ -159,6 +159,21 @@ OPENAI_PILOT_POOL = ["onyx", "echo", "alloy", "fable", "nova", "shimmer"]
 # built-in library (traffic/interactions/). This is the "customise it" hook.
 AMBIENT_LIBRARY_DIR = os.environ.get("AMBIENT_LIBRARY_DIR", "")
 
+# ── Historical LiveATC traffic (opt-in, off by default) ──────────────────────
+# Inject real recorded ATC chatter for the current airport as background texture
+# under the synthetic party line. Best-effort: no public API, gated archives,
+# thin coverage outside the US — degrades to nothing when there's no feed.
+# Automated downloading is against LiveATC's ToS; this is for personal local use.
+LIVEATC_ENABLED = os.environ.get("LIVEATC_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+# Your logged-in liveatc.net session cookie ("name=value; name2=value2"). Without
+# it, archive downloads 403 and the layer stays empty.
+LIVEATC_COOKIE = os.environ.get("LIVEATC_COOKIE", "")
+# How many recent 30-minute archive blocks to try before giving up.
+LIVEATC_LOOKBACK_BLOCKS = int(os.environ.get("LIVEATC_LOOKBACK_BLOCKS", "6"))
+# When a background-atmosphere beat fires, the chance it plays a real LiveATC clip
+# instead of synthetic squelch/static (0 = never, 1 = always). Clamped to [0,1].
+LIVEATC_MIX = max(0.0, min(1.0, float(os.environ.get("LIVEATC_MIX", "0.6"))))
+
 # ── Airspace awareness (OpenAIP) ─────────────────────────────────────────────
 # X-Plane doesn't expose controlled airspace, so we load it from OpenAIP's free
 # per-country export (CC BY-NC 4.0, https://www.openaip.net/). When enabled, the
@@ -251,7 +266,78 @@ def resolve_elevenlabs_voice(value: str) -> str:
     return ELEVENLABS_VOICE_LIBRARY.get(v.lower(), v)
 
 
+# Short descriptors for the curated controller voices, for the Settings dropdown.
+ELEVENLABS_VOICE_DESC = {
+    "daniel":  "British · deep · news",
+    "brian":   "American · deep · calm",
+    "george":  "British · warm",
+    "bill":    "American · older · documentary",
+    "adam":    "American · deep · neutral",
+    "liam":    "American · articulate",
+    "charlie": "Australian · conversational",
+    "alice":   "British · female · news",
+    "matilda": "American · female · warm",
+    "lily":    "British · female · warm",
+}
+
+# The six OpenAI TTS voices (see TTS_VOICE above).
+OPENAI_TTS_VOICES = ["onyx", "echo", "alloy", "fable", "nova", "shimmer"]
+
 ELEVENLABS_VOICE_ID = resolve_elevenlabs_voice(os.environ.get("ELEVENLABS_VOICE_ID", "daniel"))
+
+
+def active_tts_backend() -> str:
+    """Which TTS backend is live, without importing the audio stack (mirrors
+    audio.tts.active_backend so config_status can report it even when the
+    optional audio modules aren't installed)."""
+    if TTS_BACKEND != "auto":
+        return TTS_BACKEND
+    if ELEVENLABS_API_KEY:
+        return "elevenlabs"
+    if OPENAI_API_KEY:
+        return "openai"
+    return "say"
+
+
+def current_voice_name() -> str:
+    """The configured controller voice as a friendly name the UI can preselect:
+    a curated ElevenLabs name (or raw id if custom), or the OpenAI voice. Empty
+    for backends with no selectable voice (say/kokoro/piper)."""
+    backend = active_tts_backend()
+    if backend == "elevenlabs":
+        for name, vid in ELEVENLABS_VOICE_LIBRARY.items():
+            if vid == ELEVENLABS_VOICE_ID:
+                return name
+        return ELEVENLABS_VOICE_ID
+    if backend == "openai":
+        return TTS_VOICE
+    return ""
+
+
+def voice_options() -> list:
+    """Selectable controller voices for the active backend, as
+    [{value, label}] — empty when the backend's voice isn't user-selectable."""
+    backend = active_tts_backend()
+    if backend == "elevenlabs":
+        return [{"value": n, "label": f"{n.capitalize()} — {ELEVENLABS_VOICE_DESC.get(n, '')}".strip(" —")}
+                for n in ELEVENLABS_VOICE_LIBRARY]
+    if backend == "openai":
+        return [{"value": v, "label": v} for v in OPENAI_TTS_VOICES]
+    return []
+
+
+def set_voice(name: str) -> None:
+    """Persist the controller voice for the active backend. ElevenLabs stores the
+    resolved voice *id* (so synthesize works immediately and across restarts);
+    OpenAI stores the voice name."""
+    name = (name or "").strip()
+    if not name:
+        return
+    backend = active_tts_backend()
+    if backend == "elevenlabs":
+        set_env("ELEVENLABS_VOICE_ID", resolve_elevenlabs_voice(name))
+    elif backend == "openai":
+        set_env("TTS_VOICE", name)
 # Speech rate. ElevenLabs accepts 0.7–1.2 (1.0 = normal). 1.2 is the max — the
 # fast, clipped cadence of a busy controller. Clamped to the valid range.
 ELEVENLABS_TTS_SPEED = max(0.7, min(1.2, float(os.environ.get("ELEVENLABS_TTS_SPEED", "1.2"))))

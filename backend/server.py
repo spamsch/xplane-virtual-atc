@@ -14,8 +14,11 @@ Server → client event types:
   atc_audio        audio (base64 WAV), text, model, timestamp  [if AUDIO_ENABLED]
   ambient_audio    audio (base64 WAV), speaker ("pilot"|"atc"), text, callsign,
                    kind ("ambient"|"interjection")             [ambient party-line traffic]
-  ambient_noise    audio (base64 WAV), kind ("squelch"|"static"|"chatter")
-                   — background radio atmosphere between transmissions (no text)
+  ambient_noise    audio (base64 WAV), kind ("squelch"|"static"|"chatter"|
+                   "recording") — background radio atmosphere between
+                   transmissions (no text). "recording" = a real LiveATC clip
+  liveatc_status   enabled, icao, status ("off"|"idle"|"searching"|"ready"|
+                   "none"|"error"), feeds, clips, message — historical traffic
   ambient_stop     (no payload) — cut any in-flight ambient audio now (you keyed up)
   transcription    text                                        [if AUDIO_ENABLED]
   ptt_start        (no payload) — X-Plane PTT button pressed  [if XPLANE_PTT_DATAREF set]
@@ -41,6 +44,12 @@ Client → server message types:
                       callsign? — stage a journey from the route's departure field
   clear_flightplan    (no payload) — drop the active plan
   set_source          source ("xplane"|"simulated")
+  tune_com1/tune_com2 freq_mhz — set a radio. In simulated mode this mutates the
+                      simulator so handoff gating + party-line react like X-Plane
+  move_aircraft       lat?, lon?, alt_ft?, heading?, on_ground?, gs_kts?, ias_kts?
+                      — teleport the simulated aircraft (any subset of fields)
+  route_jump          to ("stand"|"departure"|"enroute"|"arrival"|"final"|
+                      "landed") — jump to a named stage of the staged journey
   set_config          config {elevenlabs_api_key?, openai_api_key?, xplane_path?, xplane_ptt_dataref?}
   set_ambient         level ("off"|"light"|"medium"|"heavy"), rules? (["VFR","IFR"])
   mic_open            (no payload) — pilot keyed the mic (suppress ambient)
@@ -79,6 +88,8 @@ from traffic.library import (
     RenderContext, InteractionLibrary,
 )
 from traffic.ambient import AmbientPlanner
+from traffic.world import TrafficWorld
+from traffic import liveatc as _liveatc_mod
 from airspace.database import AirspaceDB, Airspace
 from airspace import openaip as airspace_openaip
 from navigation.navaids import NavaidDB, parse_nav_data
@@ -174,6 +185,12 @@ _ambient_lib: Optional[InteractionLibrary] = None   # the interaction library
 _ambient_planner: Optional[AmbientPlanner] = None    # level → timing/probability
 _ambient_size: Optional[str] = None      # current airport size (small|medium|large)
 _ambient_rng = random.Random()           # selection + callsign variety
+_traffic_world: Optional[TrafficWorld] = None   # stateful roster of other aircraft
+
+# ── Historical LiveATC traffic (opt-in background texture) ───────────────────
+_liveatc = None                          # liveatc.LiveATCFeed for current airport
+_liveatc_icao: Optional[str] = None      # ICAO it was loaded for
+_liveatc_loading: bool = False
 _channel_lock: Optional[asyncio.Lock] = None   # half-duplex radio: one TX at a time
 _user_speaking: bool = False             # pilot is keying the mic → no traffic
 
@@ -296,6 +313,16 @@ async def _play_on_channel(samples, sr: int, *, event: str, **meta):
         await asyncio.sleep(duration + 0.15)
 
 
+def _data_source_live() -> bool:
+    """True when a data source is actively feeding flight state — a connected
+    X-Plane, or a loaded scenario simulator. Gates the party line, the tuned-
+    station read and the interjection beat so the simulator behaves like a live
+    sim while debugging offline."""
+    if _source == "xplane":
+        return _xplane_connected
+    return isinstance(_driver, ScenarioSimulator) and _driver.scenario is not None
+
+
 def _tuned_station() -> Optional[Station]:
     """Which ATC station the live COM1 is tuned to, matched against the airport's
     published frequencies. Falls back to the session's current station when the
@@ -308,7 +335,7 @@ def _tuned_station() -> Optional[Station]:
     # keep hearing its traffic while the controller you're talking to is FIS.
     if _flightplan is not None:
         return _session.current_station
-    if _source == "xplane" and _driver is not None:
+    if _driver is not None:
         try:
             com1 = _driver.state.com1_mhz
         except Exception:
@@ -327,7 +354,7 @@ def _ambient_active() -> bool:
     return (
         _AUDIO_READY
         and _ambient_planner is not None and _ambient_planner.enabled
-        and _source == "xplane" and _xplane_connected
+        and _data_source_live()
         and _session is not None
         and not _user_speaking
         and _thinking_count == 0
@@ -405,6 +432,25 @@ def _ambient_plan():
 
 def _render(interaction, ctx):
     return _render_interaction(interaction, ctx, _ambient_rng)
+
+
+# Airport stations whose traffic is driven by the stateful world (persistent
+# aircraft, follow-through). En-route FIS and uncontrolled CTAF keep using the
+# library of one-off exchanges.
+_WORLD_STATIONS = {"ground", "tower", "approach", "radar"}
+
+
+def _next_ambient(plan):
+    """The next party-line exchange for the current situation. Airport stations
+    come from the stateful traffic world so aircraft persist and promises get
+    kept; FIS/CTAF fall back to the one-off interaction library."""
+    station_name, size, enroute, rules, ctx = plan
+    if (not enroute and station_name in _WORLD_STATIONS
+            and _traffic_world is not None):
+        return _traffic_world.next_exchange(station_name, ctx)
+    it = _ambient_lib.pick(station=station_name, size=size, enroute=enroute,
+                           rules=rules, rng=_ambient_rng) if _ambient_lib else None
+    return _render(it, ctx) if it is not None else None
 
 
 def _pilot_voice_pool() -> list:
@@ -495,27 +541,97 @@ async def _play_background(kind: str):
                            event="ambient_noise", kind=kind)
 
 
+def _liveatc_status_dict() -> dict:
+    fb = _liveatc
+    return {
+        "enabled": bool(config.LIVEATC_ENABLED),
+        "icao": _liveatc_icao,
+        "status": fb.status if fb is not None else ("idle" if config.LIVEATC_ENABLED else "off"),
+        "feeds": len(fb.feeds) if fb is not None else 0,
+        "clips": len(fb.clips) if fb is not None else 0,
+        "message": fb.message if fb is not None else "",
+    }
+
+
+async def _broadcast_liveatc_status():
+    await _broadcast("liveatc_status", **_liveatc_status_dict())
+
+
+async def _ensure_liveatc(icao: str):
+    """Fetch historical LiveATC clips for the airport in the background. Best-
+    effort and frequently empty (no feed / gated archive); never fatal. Mirrors
+    _ensure_airspace's lazy-load shape."""
+    global _liveatc, _liveatc_icao, _liveatc_loading
+    if not config.LIVEATC_ENABLED:
+        return
+    if _liveatc_loading or (_liveatc_icao == icao and _liveatc is not None
+                            and _liveatc.status in ("ready", "none")):
+        return
+    _liveatc_loading = True
+    _liveatc_icao = icao
+    await _broadcast("liveatc_status", enabled=True, icao=icao,
+                     status="searching", feeds=0, clips=0,
+                     message=f"Searching LiveATC for {icao}…")
+    try:
+        fb = await asyncio.to_thread(
+            _liveatc_mod.fetch_clips, icao,
+            cookie=config.LIVEATC_COOKIE,
+            lookback_blocks=config.LIVEATC_LOOKBACK_BLOCKS,
+            target_sr=_audio_radio.BACKGROUND_SR if _AUDIO_READY else 16_000)
+        _liveatc = fb
+        log.info(f"LiveATC {icao}: {fb.status} — {fb.message}")
+    except Exception as e:
+        log.warning(f"LiveATC load failed for {icao}: {e}")
+        _liveatc = None
+    finally:
+        _liveatc_loading = False
+    await _broadcast_liveatc_status()
+
+
+async def _play_liveatc_segment() -> bool:
+    """Play one real recorded clip as background texture on the half-duplex
+    channel — no text, no bubble. Returns True if a clip played."""
+    fb = _liveatc
+    if not _AUDIO_READY or fb is None or not fb.clips or _user_speaking:
+        return False
+    clip = fb.random_clip(_ambient_rng)
+    if clip is None:
+        return False
+    try:
+        # Light radio FX so the recording sits in the same timbre as the synthetic
+        # traffic (bandpass + a touch of crackle); it's already real radio audio.
+        samples = await asyncio.to_thread(_audio_radio.apply_radio_fx, clip, fb.sr)
+    except Exception as e:
+        log.debug(f"LiveATC FX failed: {e}")
+        samples = clip
+    if _user_speaking:
+        return False
+    await _play_on_channel(samples, fb.sr, event="ambient_noise", kind="recording")
+    return True
+
+
+def _liveatc_available() -> bool:
+    return (config.LIVEATC_ENABLED and _liveatc is not None
+            and bool(_liveatc.clips))
+
+
 async def _maybe_interject():
     """After the pilot transmits, sometimes work one other aircraft before
     turning back to them. Called inside the transmission lock, before the real
     reply is broadcast, so the chat reads: pilot → other traffic → your reply."""
     if not _AUDIO_READY or _ambient_planner is None or not _ambient_planner.enabled:
         return
-    if _source != "xplane" or not _xplane_connected or _session is None:
+    if not _data_source_live() or _session is None:
         return
     if not _ambient_planner.should_interject():
         return
     plan = _ambient_plan()
     if not plan:
         return
-    station_name, size, enroute, rules, ctx = plan
-    it = _ambient_lib.pick(station=station_name, size=size, enroute=enroute,
-                           rules=rules, rng=_ambient_rng) if _ambient_lib else None
-    if it is None:
-        return
-    rendered = _render(it, ctx)
-    if rendered.lines:
-        log.info(f"Ambient interjection before reply: {it.id} ({rendered.callsign})")
+    rendered = _next_ambient(plan)
+    if rendered and rendered.lines:
+        log.info(f"Ambient interjection before reply: "
+                 f"{rendered.interaction.id} ({rendered.callsign})")
         await _play_rendered(rendered, kind="interjection")
 
 
@@ -537,22 +653,24 @@ async def _ambient_loop():
             if not _ambient_active():
                 break
             # Sprinkle background atmosphere through the quiet so it isn't dead air.
+            # When historical LiveATC clips are loaded, some of those beats are a
+            # real recorded burst instead of synthetic squelch/static.
             if _ambient_planner.should_emit_atmosphere(1.0):
-                await _play_background(_ambient_planner.pick_atmosphere())
+                if _liveatc_available() and _ambient_rng.random() < config.LIVEATC_MIX:
+                    if not await _play_liveatc_segment():
+                        await _play_background(_ambient_planner.pick_atmosphere())
+                else:
+                    await _play_background(_ambient_planner.pick_atmosphere())
         if not _ambient_active():
             continue
         plan = _ambient_plan()
         if not plan:
             continue
-        station_name, size, enroute, rules, ctx = plan
-        it = _ambient_lib.pick(station=station_name, size=size, enroute=enroute,
-                               rules=rules, rng=_ambient_rng) if _ambient_lib else None
-        if it is None:
+        rendered = _next_ambient(plan)
+        if not rendered or not rendered.lines or not _ambient_active():
             continue
-        rendered = _render(it, ctx)
-        if not rendered.lines or not _ambient_active():
-            continue
-        log.debug(f"Ambient traffic: {it.id} on {station_name} ({rendered.callsign})")
+        log.debug(f"Ambient traffic: {rendered.interaction.id} "
+                  f"on {plan[0]} ({rendered.callsign})")
         await _play_rendered(rendered, kind="ambient")
 
 
@@ -625,6 +743,7 @@ async def _send_current_state(ws: WebSocketServerProtocol):
                    audio_ready=_AUDIO_READY,
                    xplane_connected=_xplane_connected)
     await _send_to(ws, "config_status", **_config_status())
+    await _send_to(ws, "liveatc_status", **_liveatc_status_dict())
     if _driver:
         await _send_to(ws, "state_update", **_state_dict(_driver.state))
     if _current_airport:
@@ -691,10 +810,16 @@ async def _handle_client_message(msg: dict):
         await _tune_com1(float(msg["freq_mhz"]))
     elif t == "tune_com2":
         await _tune_com2(float(msg["freq_mhz"]))
+    elif t == "move_aircraft":
+        await _move_aircraft(msg)
+    elif t == "route_jump":
+        await _route_jump(msg.get("to"))
     elif t == "new_flight":
         await _new_flight()
     elif t == "set_config":
         await _set_config(msg.get("config", {}))
+    elif t == "preview_voice":
+        await _preview_voice()
     elif t == "set_ambient":
         await _set_ambient(msg.get("level"), msg.get("rules"))
     elif t == "mic_open":
@@ -738,9 +863,12 @@ async def _process_transmission_locked(text: str):
                 on_ground = st.on_ground > 0.5
                 altitude_ft = st.alt_ind_ft
                 gs_kts = st.gs_kts
-                if _source == "xplane":
-                    com1 = st.com1_mhz
-                    airspace_note = _airspace_note(st)
+                # COM1 gates handoffs (a handed-off station won't answer until
+                # you've actually dialled it). Honour it for the simulator too,
+                # but only once a frequency has been set — an untuned radio (0)
+                # passes None so handoffs stay lenient, as on the CLI.
+                com1 = st.com1_mhz or None
+                airspace_note = _airspace_note(st)
 
         # session.process() is blocking (calls claude subprocess)
         r = await asyncio.to_thread(
@@ -881,12 +1009,15 @@ async def _load_scenario(data: dict):
 
 async def _new_flight():
     global _session, _current_airport, _current_acft, _prev_ptt, _ambient_size, _user_speaking
-    global _flightplan, _fp_stage
+    global _flightplan, _fp_stage, _traffic_world, _liveatc, _liveatc_icao
     log.info("New flight — resetting ATC session")
     _session = None
     _current_airport = None
     _current_acft = None
     _ambient_size = None
+    _traffic_world = None
+    _liveatc = None
+    _liveatc_icao = None
     _user_speaking = False
     if _flightplan is not None:
         _flightplan = None
@@ -924,26 +1055,190 @@ async def _set_callsign(callsign: str):
             await _broadcast("state_update", **d)
 
 
-async def _tune_com1(freq_mhz: float):
+async def _tune_com(com: int, freq_mhz: float):
+    """Tune COM1 (com=1) or COM2 (com=2). In live mode this writes the X-Plane
+    dataref; in simulated mode it mutates the simulator's FlightState so the
+    handoff gating and party-line react exactly as they would against X-Plane."""
     raw = int(round(freq_mhz * 100))
-    log.info(f"Tuning COM1 → {freq_mhz:.3f} MHz")
+    dataref = 'sim/cockpit/radios/com2_freq_hz' if com == 2 else 'sim/cockpit/radios/com1_freq_hz'
+    log.info(f"Tuning COM{com} → {freq_mhz:.3f} MHz")
     if _source == "xplane" and isinstance(_driver, XPlaneRestConnector):
-        ok = await asyncio.to_thread(
-            _driver.write_dataref, 'sim/cockpit/radios/com1_freq_hz', raw
-        )
+        ok = await asyncio.to_thread(_driver.write_dataref, dataref, raw)
         if not ok:
-            await _broadcast("error", message="Could not tune COM1 in X-Plane")
+            await _broadcast("error", message=f"Could not tune COM{com} in X-Plane")
+    elif isinstance(_driver, ScenarioSimulator):
+        _driver.tune(com, freq_mhz)
+        await _broadcast("state_update", **_state_dict(_driver.state))
+
+
+async def _tune_com1(freq_mhz: float):
+    await _tune_com(1, freq_mhz)
 
 
 async def _tune_com2(freq_mhz: float):
-    raw = int(round(freq_mhz * 100))
-    log.info(f"Tuning COM2 → {freq_mhz:.3f} MHz")
-    if _source == "xplane" and isinstance(_driver, XPlaneRestConnector):
-        ok = await asyncio.to_thread(
-            _driver.write_dataref, 'sim/cockpit/radios/com2_freq_hz', raw
-        )
-        if not ok:
-            await _broadcast("error", message="Could not tune COM2 in X-Plane")
+    await _tune_com(2, freq_mhz)
+
+
+# ------------------------------------------------------------------ #
+# Simulated-mode movement — "fly" the aircraft without X-Plane
+#
+# The simulator's FlightState is the same thing the poll loop reads, so moving
+# the aircraft here drives flight-plan progression, airport adoption, handoff
+# gating and the party-line exactly as a live X-Plane would. Two entry points:
+# move_aircraft (explicit lat/lon/alt) and route_jump (symbolic stage presets
+# computed from the loaded plan or the current airport).
+
+_EARTH_R_NM = 3440.065
+
+
+def _project_nm(lat: float, lon: float, bearing_deg: float, dist_nm: float) -> tuple[float, float]:
+    """Point dist_nm along bearing_deg from (lat, lon), on a spherical earth."""
+    br = math.radians(bearing_deg)
+    d = dist_nm / _EARTH_R_NM
+    lat1, lon1 = math.radians(lat), math.radians(lon)
+    lat2 = math.asin(math.sin(lat1) * math.cos(d)
+                     + math.cos(lat1) * math.sin(d) * math.cos(br))
+    lon2 = lon1 + math.atan2(math.sin(br) * math.sin(d) * math.cos(lat1),
+                             math.cos(d) - math.sin(lat1) * math.sin(lat2))
+    return math.degrees(lat2), math.degrees(lon2)
+
+
+def _point_along_route(fp: FlightPlan, fraction: float) -> tuple[float, float, float]:
+    """(lat, lon, course) at `fraction` of the route's total distance."""
+    wps = fp.waypoints
+    segs = [_dist_bearing_nm(a.lat, a.lon, b.lat, b.lon)
+            for a, b in zip(wps, wps[1:])]
+    total = sum(nm for nm, _ in segs)
+    target = max(0.0, min(1.0, fraction)) * total
+    acc = 0.0
+    for (a, b), (nm, brg) in zip(zip(wps, wps[1:]), segs):
+        if nm <= 1e-6:
+            continue
+        if acc + nm >= target:
+            lat, lon = _project_nm(a.lat, a.lon, brg, target - acc)
+            return lat, lon, brg
+        acc += nm
+    last = wps[-1]
+    return last.lat, last.lon, (segs[-1][1] if segs else 0.0)
+
+
+async def _after_sim_move():
+    """After the simulator moves, broadcast the new state and run the same
+    position-driven logic the poll loop would — immediately, so transitions
+    fire without waiting for the next 4 s tick."""
+    if not isinstance(_driver, ScenarioSimulator):
+        return
+    state = _driver.state
+    await _broadcast("state_update", **_state_dict(state))
+    if not state.is_flight_loaded:
+        return
+    if _flightplan is not None:
+        await _flightplan_progress(state)
+    elif _airport_db is not None:
+        airport = _airport_db.nearest(state.lat, state.lon)
+        if (airport
+                and airport.icao != (_current_airport.icao if _current_airport else "")
+                and _should_adopt_airport(airport, state)):
+            log.info(f"Sim move → adopting {airport.icao} ({airport.name})")
+            await _set_airport(airport)
+
+
+async def _move_aircraft(msg: dict):
+    """Explicit position set from the UI. Any subset of fields; the rest hold."""
+    if not isinstance(_driver, ScenarioSimulator):
+        await _broadcast("error", message="Move only works in simulated mode — load a scenario first.")
+        return
+    _driver.set_position(
+        lat=msg.get("lat"), lon=msg.get("lon"), alt_ft=msg.get("alt_ft"),
+        heading=msg.get("heading"), on_ground=msg.get("on_ground"),
+        gs_kts=msg.get("gs_kts"), ias_kts=msg.get("ias_kts"))
+    await _after_sim_move()
+
+
+def _airport_elev_ft(w_or_ap) -> float:
+    """Field elevation from a Waypoint (its .airport) or an Airport, else 0."""
+    ap = getattr(w_or_ap, "airport", w_or_ap)
+    return float(getattr(ap, "elevation_ft", 0) or 0)
+
+
+async def _route_jump(target: Optional[str]):
+    """Teleport the simulated aircraft to a named stage of the journey. With a
+    flight plan loaded these map onto the staged services (stand → departure
+    climb-out → en route → arrival → short final → landed); without one they're
+    relative to the current airport."""
+    if not isinstance(_driver, ScenarioSimulator):
+        await _broadcast("error", message="Route jump only works in simulated mode.")
+        return
+    target = (target or "").strip().lower()
+
+    if _flightplan is not None:
+        fp = _flightplan
+        dep, dest = fp.departure, fp.destination
+        after_dep = fp.waypoints[1] if len(fp.waypoints) > 1 else dest
+        before_dest = fp.waypoints[-2] if len(fp.waypoints) > 1 else dep
+        dep_elev = _airport_elev_ft(dep)
+        dest_elev = _airport_elev_ft(dest)
+        _, out_brg = _dist_bearing_nm(dep.lat, dep.lon, after_dep.lat, after_dep.lon)
+        in_nm, in_brg = _dist_bearing_nm(before_dest.lat, before_dest.lon, dest.lat, dest.lon)
+        back_brg = (in_brg + 180.0) % 360.0   # from destination, back up the approach
+
+        if target == "stand":
+            pos = dict(lat=dep.lat, lon=dep.lon, alt_ft=dep_elev,
+                       heading=out_brg, on_ground=True, gs_kts=0.0)
+        elif target == "departure":
+            lat, lon = _project_nm(dep.lat, dep.lon, out_brg, _FP_DEPARTURE_CLEAR_NM + 1.5)
+            pos = dict(lat=lat, lon=lon, alt_ft=dep_elev + 2000,
+                       heading=out_brg, on_ground=False, gs_kts=95.0)
+        elif target == "enroute":
+            lat, lon, crs = _point_along_route(fp, 0.5)
+            _, crs = _dist_bearing_nm(lat, lon, dest.lat, dest.lon)
+            cruise = max(dep_elev, dest_elev) + 2500
+            pos = dict(lat=lat, lon=lon, alt_ft=cruise,
+                       heading=crs, on_ground=False, gs_kts=110.0)
+        elif target == "arrival":
+            d = max(2.0, _FP_ARRIVAL_RANGE_NM - 1.0)
+            lat, lon = _project_nm(dest.lat, dest.lon, back_brg, d)
+            pos = dict(lat=lat, lon=lon, alt_ft=dest_elev + 2500,
+                       heading=in_brg, on_ground=False, gs_kts=100.0)
+        elif target == "final":
+            lat, lon = _project_nm(dest.lat, dest.lon, back_brg, 2.0)
+            pos = dict(lat=lat, lon=lon, alt_ft=dest_elev + 700,
+                       heading=in_brg, on_ground=False, gs_kts=70.0)
+        elif target == "landed":
+            pos = dict(lat=dest.lat, lon=dest.lon, alt_ft=dest_elev,
+                       heading=in_brg, on_ground=True, gs_kts=12.0)
+        else:
+            await _broadcast("error", message=f"Unknown route target '{target}'.")
+            return
+    elif _current_airport is not None:
+        ap = _current_airport
+        elev = float(ap.elevation_ft or 0)
+        if target in ("stand", "landed"):
+            pos = dict(lat=ap.lat, lon=ap.lon, alt_ft=elev,
+                       heading=0.0, on_ground=True,
+                       gs_kts=(12.0 if target == "landed" else 0.0))
+        elif target in ("departure", "enroute", "arrival"):
+            # Place 8 NM east, airborne — enough to read as "out of the circuit".
+            lat, lon = _project_nm(ap.lat, ap.lon, 90.0, 8.0)
+            _, crs = _dist_bearing_nm(lat, lon, ap.lat, ap.lon)
+            pos = dict(lat=lat, lon=lon, alt_ft=elev + 2500,
+                       heading=crs, on_ground=False, gs_kts=100.0)
+        elif target == "final":
+            lat, lon = _project_nm(ap.lat, ap.lon, 90.0, 3.0)
+            _, crs = _dist_bearing_nm(lat, lon, ap.lat, ap.lon)
+            pos = dict(lat=lat, lon=lon, alt_ft=elev + 900,
+                       heading=crs, on_ground=False, gs_kts=70.0)
+        else:
+            await _broadcast("error", message=f"Unknown route target '{target}'.")
+            return
+    else:
+        await _broadcast("error", message="No flight plan or airport to jump to.")
+        return
+
+    log.info(f"Route jump → {target}: {pos['lat']:.4f},{pos['lon']:.4f} "
+             f"alt {pos['alt_ft']:.0f} ft {'ground' if pos['on_ground'] else 'airborne'}")
+    _driver.set_position(**pos)
+    await _after_sim_move()
 
 
 async def _on_ptt_change(pressed: bool):
@@ -1084,12 +1379,18 @@ async def _await_live_weather(timeout: float = 12.0, poll: float = 0.5):
 async def _set_airport_inner(airport: Airport, scenario: Optional[Scenario] = None):
     global _current_airport, _session
 
-    global _ambient_size
+    global _ambient_size, _traffic_world
     _current_airport = airport
     _ambient_size = classify_size(airport)
+    # Fresh roster for the new field — its traffic shouldn't inherit the last
+    # airfield's aircraft. Seeded off the shared ambient RNG for reproducibility.
+    _traffic_world = TrafficWorld(_ambient_rng)
     log.info(f"Ambient: {airport.icao} classified as a {_ambient_size} field")
     # Load this country's airspace in the background (cached after first run).
     asyncio.create_task(_ensure_airspace(airport.icao))
+    # And, if opted in, historical LiveATC traffic for the field (best-effort).
+    if config.LIVEATC_ENABLED:
+        asyncio.create_task(_ensure_liveatc(airport.icao))
     await _broadcast("airport_detected", **_airport_dict(airport))
 
     # Build per-airport conditions dict for ATCSession
@@ -1401,6 +1702,36 @@ def _waypoint_dict(w) -> dict:
     return d
 
 
+def _field_service(w) -> tuple[str, Optional[float]]:
+    """(callsign, freq_mhz) for the contact at a route endpoint field. A
+    controlled field hands its first-contact service (Ground, else Tower); an
+    uncontrolled field its self-announce frequency (AFIS 'Information', else
+    'Traffic')."""
+    ap = w.airport
+    if ap is None:
+        return (w.ident, None)
+    city = ap.name.split()[0]
+    if w.controlled:
+        gnd, twr, app = ap.freq(53), ap.freq(54), ap.freq(55)
+        f = gnd or twr or app
+        word = "Ground" if gnd else "Tower" if twr else "Approach"
+        return (f"{city} {word}", f.freq_mhz if f else None)
+    word = "Information" if ap.frequencies else "Traffic"
+    return (f"{city} {word}", field_service_freq(ap))
+
+
+def _flightplan_services(fp: FlightPlan) -> list:
+    """The frequencies for the whole staged journey, in order — what the pilot
+    needs at each leg. departure field → en-route FIS → arrival field."""
+    dep_cs, dep_freq = _field_service(fp.departure)
+    arr_cs, arr_freq = _field_service(fp.destination)
+    return [
+        {"stage": "departure", "label": dep_cs,        "freq_mhz": dep_freq},
+        {"stage": "enroute",   "label": fp.fis.callsign, "freq_mhz": fp.fis.freq_mhz},
+        {"stage": "arrival",   "label": arr_cs,        "freq_mhz": arr_freq},
+    ]
+
+
 def _flightplan_dict(fp: FlightPlan) -> dict:
     return {
         "route": fp.route,
@@ -1408,6 +1739,7 @@ def _flightplan_dict(fp: FlightPlan) -> dict:
         "total_nm": round(fp.total_nm, 1),
         "stage": _fp_stage,
         "fis": {"callsign": fp.fis.callsign, "freq_mhz": fp.fis.freq_mhz},
+        "services": _flightplan_services(fp),
         "waypoints": [_waypoint_dict(w) for w in fp.waypoints],
     }
 
@@ -1918,6 +2250,11 @@ def _config_status() -> dict:
             "has_openai":         bool(config.OPENAI_API_KEY),
             "ambient_level":      config.AMBIENT_TRAFFIC_LEVEL,
             "ambient_rules":      list(config.AMBIENT_TRAFFIC_RULES),
+            "tts_backend":        config.active_tts_backend(),
+            "voice":              config.current_voice_name(),
+            "voice_options":      config.voice_options(),
+            "liveatc_enabled":    bool(config.LIVEATC_ENABLED),
+            "has_liveatc_cookie": bool(config.LIVEATC_COOKIE),
         },
     }
 
@@ -1934,6 +2271,25 @@ async def _set_config(cfg: dict):
         config.set_env("OPENAI_API_KEY", cfg["openai_api_key"])
     if cfg.get("xplane_ptt_dataref") is not None:
         config.set_env("XPLANE_PTT_DATAREF", cfg["xplane_ptt_dataref"])
+    if cfg.get("voice"):
+        config.set_voice(cfg["voice"])
+        log.info(f"Controller voice → {config.current_voice_name()}")
+    liveatc_changed = False
+    if cfg.get("liveatc_cookie") is not None:
+        config.set_env("LIVEATC_COOKIE", cfg["liveatc_cookie"])
+        liveatc_changed = True
+    if cfg.get("liveatc_enabled") is not None:
+        on = bool(cfg["liveatc_enabled"])
+        config.set_env("LIVEATC_ENABLED", "true" if on else "false")
+        config.LIVEATC_ENABLED = on   # set_env stored the string; keep the bool
+        liveatc_changed = True
+    if liveatc_changed:
+        global _liveatc, _liveatc_icao
+        _liveatc = None
+        _liveatc_icao = None
+        if config.LIVEATC_ENABLED and _current_airport is not None:
+            asyncio.create_task(_ensure_liveatc(_current_airport.icao))
+        await _broadcast_liveatc_status()
     if cfg.get("xplane_path"):
         config.set_env("XPLANE_PATH", cfg["xplane_path"])
         config.set_xplane_path(cfg["xplane_path"])
@@ -1946,6 +2302,26 @@ async def _set_config(cfg: dict):
         await asyncio.to_thread(_audio_tts.check)
     await _broadcast_config_status()
     log.info("Configuration updated via Settings.")
+
+
+async def _preview_voice():
+    """Speak a short sample with the configured controller voice + radio FX, so
+    the Settings dropdown can be auditioned. Audio only — no chat bubble."""
+    if not _AUDIO_READY:
+        await _broadcast("error",
+                         message="Voice preview needs the audio modules (requirements-audio.txt).")
+        return
+    sample = ("Hannover Tower, good day, wind 270 degrees 8 knots, "
+              "runway 27 left, cleared for takeoff.")
+    try:
+        spoken = _radio_text.to_spoken(sample)
+        samples, sr = await asyncio.to_thread(_audio_tts.synthesize, spoken)
+        samples = _audio_radio.apply_radio_fx(samples, sr)
+        await _play_on_channel(samples, sr, event="atc_audio",
+                               text=sample, model=None, timestamp=time.time())
+    except Exception as e:
+        log.warning(f"Voice preview failed: {e}")
+        await _broadcast("error", message=f"Voice preview failed: {e}")
 
 
 async def _set_vfr_weather():

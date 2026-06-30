@@ -8,7 +8,7 @@ import {
   flightState, airport, activeRunway, atcCallsign, boundaryNotes,
   messages, phase, station, thinking, loading, loadingLabel,
   configStatus, pttActive, transcription, audioEnabled, vfrWeather,
-  ambientLevel, flightplan, flightplanStage, flightplanFreq,
+  ambientLevel, flightplan, flightplanStage, flightplanFreq, liveatcStatus,
 } from './store.js';
 import { playMicClick } from './sound.js';
 
@@ -207,6 +207,10 @@ function dispatch(msg) {
       if (msg.current?.ambient_level) ambientLevel.set(msg.current.ambient_level);
       break;
 
+    case 'liveatc_status':
+      liveatcStatus.set(msg);
+      break;
+
     case 'state_update':
       flightState.set(msg);
       break;
@@ -360,6 +364,18 @@ export function tuneCom1(freqMhz) {
   sendMessage('tune_com1', { freq_mhz: freqMhz });
 }
 
+/** Simulated mode: teleport the aircraft. `pos` is any subset of
+ *  {lat, lon, alt_ft, heading, on_ground, gs_kts, ias_kts}. */
+export function moveAircraft(pos) {
+  sendMessage('move_aircraft', pos);
+}
+
+/** Simulated mode: jump to a named stage of the journey —
+ *  'stand'|'departure'|'enroute'|'arrival'|'final'|'landed'. */
+export function routeJump(to) {
+  sendMessage('route_jump', { to });
+}
+
 export function setSource(src) {
   sendMessage('set_source', { source: src });
 }
@@ -370,6 +386,11 @@ export function newFlight() {
 
 export function setConfig(cfg) {
   sendMessage('set_config', { config: cfg });
+}
+
+/** Audition the configured controller voice (plays a short sample). */
+export function previewVoice() {
+  sendMessage('preview_voice');
 }
 
 /** Set ambient-traffic density: 'off' | 'light' | 'medium' | 'heavy'. */

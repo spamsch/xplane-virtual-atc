@@ -1,7 +1,20 @@
 <script>
   import { airport, activeRunway, com1Mhz, com2Mhz, scenarioDrawerOpen,
-           xplaneConnected, vfrWeather } from './store.js';
+           xplaneConnected, vfrWeather, flightplan, flightplanStage } from './store.js';
   import { sendMessage, setVfrWeather } from './ws.js';
+
+  // Flight-plan services — the valid frequencies for the whole journey, with the
+  // leg that's working you right now highlighted as the service "switches" from
+  // the departure field to the en-route FIS to the arrival field.
+  const STAGE_LABEL = { departure: 'DEP', enroute: 'FIS', arrival: 'ARR' };
+  $: fpServices = $flightplan?.services ?? [];
+  function stageActive(stage) {
+    const s = $flightplanStage;
+    if (!s) return false;
+    if (s === 'arrival_ground') return stage === 'arrival';
+    return s === stage;
+  }
+  function isCom1Freq(f) { return f && Math.abs(f - $com1Mhz) < 0.005; }
 
   const freqTypeOrder = [53, 54, 50, 52, 55, 56, 51];  // GND, TWR, ATIS, CLD, APP, DEP, CTAF
   const freqTypeShort = {
@@ -32,6 +45,26 @@
 </script>
 
 <aside class="airport-panel">
+  {#if fpServices.length}
+    <!-- Flight-plan services — the active leg is highlighted; click to tune COM1 -->
+    <section class="fp-services">
+      <div class="section-label">FLIGHT PLAN</div>
+      {#each fpServices as svc}
+        <button class="fp-row" class:active={stageActive(svc.stage)}
+                disabled={!svc.freq_mhz}
+                onclick={() => svc.freq_mhz && tuneCom1(svc.freq_mhz)}
+                title={svc.freq_mhz ? 'Tune COM1' : 'No published frequency'}>
+          <span class="fp-stage">{STAGE_LABEL[svc.stage] ?? svc.stage}</span>
+          <span class="fp-name">{svc.label}</span>
+          <span class="fp-freq" class:com1={isCom1Freq(svc.freq_mhz)}>
+            {svc.freq_mhz ? svc.freq_mhz.toFixed(3) : '—'}
+          </span>
+        </button>
+      {/each}
+    </section>
+    <div class="divider"></div>
+  {/if}
+
   {#if ap}
     <!-- Airport identity -->
     <section class="identity">
@@ -156,6 +189,40 @@
   .rwy-name  { font-weight: 600; }
   .rwy-width { font-size: 10px; margin-left: auto; }
   .active-rwy .rwy-name { color: var(--accent-green); }
+
+  /* Flight-plan service ladder */
+  .fp-services { display: flex; flex-direction: column; gap: 4px; }
+  .fp-row {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    width: 100%;
+    padding: 5px 6px;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-left: 2px solid transparent;
+    border-radius: var(--radius);
+    text-align: left;
+    transition: border-color 0.12s, background 0.12s;
+  }
+  .fp-row:not(:disabled):hover { border-color: var(--border-bright); }
+  .fp-row:disabled { opacity: 0.55; cursor: default; }
+  .fp-row.active {
+    border-left-color: var(--accent-green);
+    background: rgba(63, 185, 80, 0.08);
+  }
+  .fp-stage {
+    font-size: 9px; font-weight: 700; letter-spacing: 0.08em;
+    color: var(--text-dim); width: 26px; flex-shrink: 0;
+  }
+  .fp-row.active .fp-stage { color: var(--accent-green); }
+  .fp-name {
+    font-size: 12px; color: var(--text-muted);
+    flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .fp-row.active .fp-name { color: var(--text); }
+  .fp-freq { font-size: 13px; color: var(--text-muted); flex-shrink: 0; }
+  .fp-freq.com1 { color: var(--accent-green); font-weight: 600; }
 
   .freq-section { display: flex; flex-direction: column; gap: 4px; }
 

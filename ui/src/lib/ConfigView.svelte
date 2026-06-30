@@ -1,13 +1,22 @@
 <script>
-  import { configStatus, settingsOpen, ambientLevel } from './store.js';
-  import { setConfig, setAmbient } from './ws.js';
+  import { configStatus, settingsOpen, ambientLevel, liveatcStatus } from './store.js';
+  import { setConfig, setAmbient, previewVoice } from './ws.js';
 
   const AMBIENT_LEVELS = ['off', 'light', 'medium', 'heavy'];
 
   let elevenKey = '';
   let xplanePath = '';
+  let liveatcCookie = '';
   let justSaved = false;
   let initialized = false;
+
+  // LiveATC opt-in
+  $: la = $liveatcStatus;
+  $: laEnabled = cur.liveatc_enabled ?? false;
+  function toggleLiveatc() { setConfig({ liveatc_enabled: !laEnabled }); }
+  function saveCookie() {
+    if (liveatcCookie.trim()) { setConfig({ liveatc_cookie: liveatcCookie.trim() }); liveatcCookie = ''; }
+  }
 
   // Prefill the X-Plane path once, from the backend's current value.
   $: cur = $configStatus?.current ?? {};
@@ -19,6 +28,13 @@
   $: checks = $configStatus?.checks ?? {};
   $: configured = $configStatus?.configured ?? false;
   const order = ['claude', 'voice', 'xplane_path', 'xplane_link'];
+
+  // Controller voice — options + current selection come from the backend, keyed
+  // to the active TTS backend (ElevenLabs names or OpenAI voices).
+  $: voiceOptions = cur.voice_options ?? [];
+  $: currentVoice = cur.voice ?? '';
+  $: voiceBackend = cur.tts_backend ?? '';
+  function onVoiceChange(e) { setConfig({ voice: e.target.value }); }
 
   function save() {
     const cfg = {};
@@ -75,6 +91,24 @@
     </label>
 
     <div class="field">
+      <span class="field-label">Controller voice</span>
+      {#if voiceOptions.length}
+        <div class="voice-row">
+          <select class="voice-select" value={currentVoice} onchange={onVoiceChange}>
+            {#each voiceOptions as opt}
+              <option value={opt.value}>{opt.label}</option>
+            {/each}
+          </select>
+          <button type="button" class="preview-btn" onclick={previewVoice} title="Hear a sample">▶ Preview</button>
+        </div>
+        <span class="hint">The voice the controller speaks with ({voiceBackend}). Applies immediately.</span>
+      {:else}
+        <span class="hint">The active voice backend ({voiceBackend || 'none'}) has no selectable voice.
+          Add an ElevenLabs or OpenAI key to choose one.</span>
+      {/if}
+    </div>
+
+    <div class="field">
       <span class="field-label">Background traffic</span>
       <div class="seg">
         {#each AMBIENT_LEVELS as lvl}
@@ -88,6 +122,31 @@
       </div>
       <span class="hint">Other aircraft on your frequency, live from X-Plane. Matched to the
         station you’re tuned to and the airport’s size; goes quiet while you transmit. VFR only for now.</span>
+    </div>
+
+    <div class="field">
+      <span class="field-label">Historical LiveATC traffic <em>(experimental)</em></span>
+      <div class="seg">
+        <button type="button" class="seg-btn" class:active={!laEnabled} onclick={() => laEnabled && toggleLiveatc()}>off</button>
+        <button type="button" class="seg-btn" class:active={laEnabled} onclick={() => !laEnabled && toggleLiveatc()}>on</button>
+      </div>
+      {#if laEnabled}
+        <input type="password" bind:value={liveatcCookie} onblur={saveCookie}
+               placeholder={cur.has_liveatc_cookie ? '•••••••• session cookie stored' : 'liveatc.net session cookie (optional)'}
+               spellcheck="false" autocomplete="off" />
+        {#if la}
+          <span class="la-status" class:bad={la.status === 'none' || la.status === 'error'}>
+            {#if la.status === 'searching'}Searching LiveATC for {la.icao}…
+            {:else if la.status === 'ready'}● {la.clips} clips loaded for {la.icao} — {la.message}
+            {:else if la.status === 'none'}No usable feed for {la.icao ?? 'this field'}. {la.message}
+            {:else if la.status === 'error'}LiveATC error. {la.message}
+            {:else}Idle — load an airport to fetch its traffic.{/if}
+          </span>
+        {/if}
+      {/if}
+      <span class="hint">Real recorded chatter for the current airport, played as background
+        texture under the synthetic traffic. Best-effort: no public API, thin coverage outside the US,
+        and archives need your logged-in liveatc.net cookie. Off by default; personal local use only.</span>
     </div>
 
     <div class="actions">
@@ -137,6 +196,24 @@
   .field input { padding: 8px 10px; font-size: 13px; }
   .hint { font-size: 11px; color: var(--text-muted); }
   .url { color: var(--accent-blue); }
+
+  .voice-row { display: flex; gap: 8px; align-items: stretch; }
+  .voice-select {
+    flex: 1; padding: 8px 10px; font-size: 13px;
+    background: var(--bg-input); color: var(--text);
+    border: 1px solid var(--border); border-radius: var(--radius);
+    font-family: inherit;
+  }
+  .preview-btn {
+    padding: 8px 12px; font-size: 12px; font-weight: 600;
+    background: var(--bg-input); color: var(--text-muted);
+    border: 1px solid var(--border); border-radius: var(--radius);
+    white-space: nowrap; transition: color 0.12s, border-color 0.12s;
+  }
+  .preview-btn:hover { color: var(--accent-blue); border-color: var(--accent-blue); }
+
+  .la-status { font-size: 11px; color: var(--accent-green); line-height: 1.4; }
+  .la-status.bad { color: var(--accent-amber); }
 
   .seg { display: flex; gap: 4px; }
   .seg-btn {

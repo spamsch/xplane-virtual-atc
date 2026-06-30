@@ -44,6 +44,9 @@ export const audioEnabled    = writable(false);   // set true once mic permissio
 // Ambient traffic ("party line")
 export const ambientLevel    = writable('medium'); // off|light|medium|heavy (mirrors backend)
 
+// Historical LiveATC traffic (opt-in background texture)
+export const liveatcStatus   = writable(null);     // {enabled, icao, status, feeds, clips, message}
+
 // Derived: is the aircraft on the ground?
 export const onGround = derived(flightState, $s => $s?.on_ground ?? true);
 
